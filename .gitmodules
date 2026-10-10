@@ -1,0 +1,3 @@
+[submodule "vendor/hostel-checkin-system"]
+	path = vendor/hostel-checkin-system
+	url = https://github.com/jalalhussein1982/hostel-checkin-system

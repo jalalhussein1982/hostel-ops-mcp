@@ -6,3 +6,8 @@ __pycache__/
 *.db-journal
 dist/
 .DS_Store
+*.db-wal
+*.db-shm
+exports/
+data/
+uv.lock.bak
