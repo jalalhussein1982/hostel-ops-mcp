@@ -201,3 +201,157 @@ def month_summary() -> list[dict[str, Any]]:
 
 def audit_recent(limit: int = 50) -> list[dict[str, Any]]:
     return app().repo.audit_recent(limit)
+
+
+# ---------------------------------------------------------------- writes (non-destructive)
+
+class InvalidState(Exception):
+    """The registration/group is not in a state that allows this action."""
+
+    def __init__(self, what: str, current: str, allowed: list[str]) -> None:
+        allowed_txt = ", ".join(allowed) if allowed else "none"
+        super().__init__(f"{what} is {current}; allowed actions from {current}: {allowed_txt}")
+        self.current, self.allowed = current, allowed
+
+
+class Invalid(Exception):
+    """Field validation failed. ``errors`` is {field: message}."""
+
+    def __init__(self, errors: dict[str, str]) -> None:
+        super().__init__("; ".join(f"{k}: {v}" for k, v in errors.items()))
+        self.errors = errors
+
+
+def _allowed_actions(state_value: str) -> list[str]:
+    st = app().state
+    try:
+        current = st.State(state_value)
+    except ValueError:
+        return []
+    out = []
+    for action in st.Action:
+        try:
+            st.next_state(current, action)
+            out.append(action.value)
+        except st.InvalidTransition:
+            pass
+    return out
+
+
+def _check_transition(rec: dict[str, Any], action_name: str) -> None:
+    st = app().state
+    try:
+        st.next_state(st.State(rec["state"]), st.Action[action_name])
+    except st.InvalidTransition:
+        raise InvalidState(f"registration {rec['token']}", rec["state"], _allowed_actions(rec["state"]))
+
+
+def approve(token: str, actor: str) -> dict[str, Any]:
+    """PENDING_REVIEW -> APPROVED through the app's state machine; idempotent on APPROVED."""
+    a = app()
+    rec = get_registration(token)
+    if rec["state"] == a.state.State.APPROVED.value:
+        return {"token": token, "serial": rec["serial"], "approved_at": rec["approved_at"], "already_approved": True}
+    _check_transition(rec, "APPROVE")
+    a.repo.approve(token)
+    rec = a.repo.get_registration(token)
+    a.repo.audit(actor, "approve", period=(rec.get("arrival") or "")[:7] or None, detail=token)
+    return {"token": token, "serial": rec["serial"], "approved_at": rec["approved_at"], "already_approved": False}
+
+
+def return_registration(token: str, reason: str, step: int, actor: str) -> dict[str, Any]:
+    a = app()
+    reason = reason.strip()
+    if not reason:
+        raise Invalid({"reason": "a reason note is required; the guest sees it"})
+    if step not in (1, 2, 3):
+        raise Invalid({"step": "must be 1 (dates), 2 (personal) or 3 (address)"})
+    rec = get_registration(token)
+    _check_transition(rec, "RETURN")
+    a.repo.set_returned(token, reason=reason, step=step)
+    a.repo.audit(actor, "return", period=(rec.get("arrival") or "")[:7] or None, detail=f"{token} step={step}")
+    return {"token": token, "state": "RETURNED", "return_step": step, "return_reason": reason}
+
+
+# --- group invites -------------------------------------------------------------------
+# Email is injected so the synthetic default never touches SMTP. In live mode the app's own
+# group_email.try_send runs (it returns False, never raises, when GMAIL_* is unset).
+
+SENT_INVITES: list[dict[str, Any]] = []   # synthetic-mode recorder (tests and demos read it)
+
+
+def record_invite(group: dict[str, Any], link: str, password: str) -> bool:
+    SENT_INVITES.append({"slug": group["slug"], "to": group["receiver_email"], "link": link})
+    return False
+
+
+def smtp_invite(group: dict[str, Any], link: str, password: str) -> bool:
+    ge = app().group_email if hasattr(app(), "group_email") else __import__("app.group_email", fromlist=["x"])
+    return bool(ge.try_send(ge.build_invite(group, link, password)))
+
+
+def default_send_invite():
+    return smtp_invite if os.environ.get("HOSTEL_MODE", "synthetic") == "live" else record_invite
+
+
+def base_url() -> str:
+    return (os.environ.get("PUBLIC_BASE_URL") or app().config.settings.public_base_url
+            or "http://127.0.0.1:8080").rstrip("/")
+
+
+def _links(group: dict[str, Any]) -> tuple[str, str]:
+    base = base_url()
+    return f"{base}/g/{group['slug']}", f"{base}/gm/{group['member_token']}"
+
+
+def _new_password() -> str:
+    import secrets
+
+    return secrets.token_urlsafe(9)
+
+
+def create_group_link(fields: dict[str, Any], actor: str, send_invite=None) -> dict[str, Any]:
+    """Validate with the app's own validator, create the PENDING request, send (or record) the invite."""
+    a = app()
+    send_invite = send_invite or default_send_invite()
+    password = _new_password()
+    cleaned, errors = a.group_validation.validate_create({**fields, "password": password})
+    purpose = fields.get("purpose_of_stay") or "leisure"
+    if purpose not in ("leisure", "business"):
+        errors["purpose_of_stay"] = "must be leisure or business"
+    if errors:
+        raise Invalid(errors)
+    cleaned.pop("password")
+    slug = a.groups.create(cleaned, a.auth.hash_password(password))
+    a.groups.set_purpose(slug, purpose)
+    group = a.groups.get(slug)
+    portal_url, member_url = _links(group)
+    sent = bool(send_invite(group, portal_url, password))
+    if sent:
+        a.groups.mark_invite_sent(slug)
+    a.repo.audit(actor, "group_invite", period=group["arrival"][:7], detail=f"{slug} created")
+    return {"slug": slug, "portal_url": portal_url, "member_url": member_url, "portal_password": password,
+            "email_sent": sent, "receiver_email": group["receiver_email"]}
+
+
+def resend_group_invite(slug: str, receiver_email: str | None, actor: str, send_invite=None) -> dict[str, Any]:
+    a = app()
+    send_invite = send_invite or default_send_invite()
+    group = a.groups.get(slug)
+    if group is None:
+        raise NotFound("group", slug, "list_groups")
+    if group["status"] != a.groups.PENDING:
+        raise InvalidState(f"group {slug}", group["status"], [])
+    email = (receiver_email or group["receiver_email"]).strip()
+    if not a.group_validation.email_ok(email):
+        raise Invalid({"receiver_email": "enter a valid email address"})
+    password = _new_password()
+    a.groups.update_invite(slug, email, a.auth.hash_password(password))
+    group = a.groups.get(slug)
+    portal_url, member_url = _links(group)
+    sent = bool(send_invite(group, portal_url, password))
+    if sent:
+        a.groups.mark_invite_sent(slug)
+    a.repo.audit(actor, "group_invite", period=group["arrival"][:7], detail=f"{slug} resent")
+    return {"slug": slug, "portal_url": portal_url, "member_url": member_url, "portal_password": password,
+            "email_sent": sent, "receiver_email": email}

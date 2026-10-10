@@ -36,8 +36,8 @@ from pydantic import Field
 
 from . import guards, ops, redact
 from .models import (
-    AuditRow, GroupCard, GroupDetail, GroupMemberRow, MinorAlert, MonthRow,
-    Registration, RegistrationCard, RegistrationPage, SignatureInfo,
+    ApprovalResult, AuditRow, GroupCard, GroupDetail, GroupLink, GroupMemberRow, MinorAlert, MonthRow,
+    Registration, RegistrationCard, RegistrationPage, ReturnResult, SignatureInfo,
 )
 
 mcp = MCPServer(
@@ -220,6 +220,97 @@ async def audit_log(
     actor `mcp:<subject>`."""
     guards.require(ctx, "audit_log")
     return [AuditRow.model_validate(a) for a in ops.audit_recent(limit)]
+
+
+# ── write tools, non-destructive (spec §4.2) ────────────────────────────────────────
+
+
+def _write(title: str, *, idempotent: bool, open_world: bool = False) -> ToolAnnotations:
+    return ToolAnnotations(title=title, read_only_hint=False, destructive_hint=False,
+                           idempotent_hint=idempotent, open_world_hint=open_world)
+
+
+def _as_tool_error(e: Exception) -> ToolError:
+    if isinstance(e, ops.NotFound):
+        return ToolError(str(e))
+    if isinstance(e, ops.InvalidState):
+        return ToolError(str(e))
+    if isinstance(e, ops.Invalid):
+        return ToolError("invalid input: " + str(e))
+    raise e
+
+
+@mcp.tool(annotations=_write("Approve registration", idempotent=True))
+async def approve_registration(
+    ctx: Context,
+    token: Annotated[str, Field(description="A PENDING_REVIEW token from list_pending_registrations.")],
+) -> ApprovalResult:
+    """Approve a pending registration: the app assigns the per-arrival serial and stores
+    the address in capitals. Only PENDING_REVIEW rows can be approved; the error names
+    the current state and the actions it allows. Calling it again on an APPROVED row
+    returns the same result with already_approved=true, so retries are safe. Audited."""
+    caller = guards.require(ctx, "approve_registration")
+    try:
+        return ApprovalResult.model_validate(ops.approve(token, caller.actor))
+    except (ops.NotFound, ops.InvalidState) as e:
+        raise _as_tool_error(e)
+
+
+@mcp.tool(annotations=_write("Return registration", idempotent=False))
+async def return_registration(
+    ctx: Context,
+    token: Annotated[str, Field(description="A PENDING_REVIEW token.")],
+    reason: Annotated[str, Field(min_length=1, max_length=500, description="Shown to the guest.")],
+    step: Annotated[int, Field(ge=1, le=3, description="Wizard page to reopen: 1 dates, 2 personal, 3 address.")],
+) -> ReturnResult:
+    """Send a pending registration back to the guest with a reason, reopening one wizard
+    page, as the desk's Return button does. PENDING_REVIEW -> RETURNED. Audited."""
+    caller = guards.require(ctx, "return_registration")
+    try:
+        return ReturnResult.model_validate(ops.return_registration(token, reason, step, caller.actor))
+    except (ops.NotFound, ops.InvalidState, ops.Invalid) as e:
+        raise _as_tool_error(e)
+
+
+@mcp.tool(annotations=_write("Create group link", idempotent=False, open_world=True))
+async def create_group_link(
+    ctx: Context,
+    group_name: Annotated[str, Field(min_length=1, max_length=120)],
+    leader_first_name: Annotated[str, Field(min_length=1)],
+    leader_last_name: Annotated[str, Field(min_length=1)],
+    arrival: Annotated[str, Field(description="ISO date, group-wide.")],
+    departure: Annotated[str, Field(description="ISO date, after arrival.")],
+    receiver_email: Annotated[str, Field(description="Where the invite goes.")],
+    purpose_of_stay: Annotated[Literal["leisure", "business"], Field()] = "leisure",
+) -> GroupLink:
+    """Open a group pre-registration: creates the PENDING request, generates the portal
+    password and emails the invite (in synthetic mode the email is recorded, not sent).
+
+    The password appears in this result once. The server stores only its argon2 hash;
+    use resend_group_invite to issue a new one."""
+    caller = guards.require(ctx, "create_group_link")
+    fields = {"group_name": group_name, "leader_first_name": leader_first_name,
+              "leader_last_name": leader_last_name, "arrival": arrival, "departure": departure,
+              "receiver_email": receiver_email, "purpose_of_stay": purpose_of_stay}
+    try:
+        return GroupLink.model_validate(ops.create_group_link(fields, caller.actor))
+    except ops.Invalid as e:
+        raise _as_tool_error(e)
+
+
+@mcp.tool(annotations=_write("Resend group invite", idempotent=False, open_world=True))
+async def resend_group_invite(
+    ctx: Context,
+    slug: Annotated[str, Field(description="A PENDING group's slug.")],
+    receiver_email: Annotated[str | None, Field(description="Corrected address; default: the stored one.")] = None,
+) -> GroupLink:
+    """Re-issue a PENDING group's invite with a fresh portal password (the old one is
+    unrecoverable from its hash), optionally to a corrected email address."""
+    caller = guards.require(ctx, "resend_group_invite")
+    try:
+        return GroupLink.model_validate(ops.resend_group_invite(slug, receiver_email, caller.actor))
+    except (ops.NotFound, ops.InvalidState, ops.Invalid) as e:
+        raise _as_tool_error(e)
 
 
 def main() -> None:
