@@ -188,7 +188,8 @@ class ExportResult(_Model):
     resource_uri: str = Field(description="Read this resource to get the bytes.")
     format: Literal["xlsx", "pdf"]
     rows: int
-    skipped: list[str] = Field(description="Tokens that were not APPROVED and were left out.")
+    skipped: list[str] = Field(description="Tokens that were not APPROVED (or unknown) and were left out.")
+    skipped_detail: list[str] = Field(default_factory=list, description="`token: STATE` for each skipped token.")
     sha256: str
     generated_at: str
     expires_at: str

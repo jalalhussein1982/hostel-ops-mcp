@@ -30,13 +30,13 @@ from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
-from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ResourceError, ResourceNotFoundError, ToolError
 from mcp.types import InputRequiredResult, ToolAnnotations
 from pydantic import Field
 
 from . import confirm, guards, ops, redact
 from .models import (
-    ApprovalResult, AuditRow, Cancelled, EraseResult, GroupCard, GroupDetail, GroupLink, GroupMemberRow,
+    ApprovalResult, AuditRow, Cancelled, EditResult, EraseResult, ExportResult, GroupCard, GroupDetail, GroupLink, GroupMemberRow,
     MinorAlert, MonthRow, PurgeResult, Registration, RegistrationCard, RegistrationPage, ReturnResult, SignatureInfo,
 )
 
@@ -313,6 +313,52 @@ async def resend_group_invite(
         raise _as_tool_error(e)
 
 
+# ── export and admin edit (spec §4.2 export row, §4.3) ──────────────────────────────
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Authority export", read_only_hint=False, destructive_hint=False,
+                                      idempotent_hint=False, open_world_hint=False))
+async def export_authority_report(
+    ctx: Context,
+    tokens: Annotated[list[str] | None, Field(description="Explicit registrations; non-APPROVED ones are skipped.")] = None,
+    arrival_from: Annotated[str | None, Field(description="Or an arrival window: ISO date, inclusive.")] = None,
+    arrival_to: Annotated[str | None, Field(description="ISO date, inclusive.")] = None,
+    format: Annotated[Literal["xlsx", "pdf"], Field(description="File format.")] = "xlsx",
+) -> ExportResult:
+    """Build the registration export the hostel hands to the authority (the app's own
+    XLSX/PDF layout) from APPROVED rows only. Needs `export` and `pii:read`.
+
+    The file is written server-side and expires after EXPORT_TTL_MINUTES; read the bytes
+    through the returned `resource_uri`. Tokens that are not APPROVED are listed in
+    `skipped` and never exported. Audited with counts, never names."""
+    caller = guards.require(ctx, "export_authority_report")
+    try:
+        return ExportResult.model_validate(ops.export(tokens, arrival_from, arrival_to, format, caller.actor))
+    except ops.Invalid as e:
+        raise _as_tool_error(e)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Edit approved registration", read_only_hint=False,
+                                      destructive_hint=False, idempotent_hint=True, open_world_hint=False))
+async def edit_approved_registration(
+    ctx: Context,
+    token: Annotated[str, Field(description="An APPROVED token.")],
+    fields: Annotated[dict[str, str | int | None], Field(
+        description="Wizard fields to change: arrival, departure, purpose_of_stay, last_name, first_name, dob, "
+                    "passport_no, nationality (alpha-3), visa_no, car_reg, addr_line, addr_postcode, addr_city, "
+                    "addr_country, addr_structured.")],
+) -> EditResult:
+    """Correct an APPROVED registration with the same validators the guest wizard uses.
+    Needs `admin:write` and `pii:read`. Only the named fields change; moving the arrival
+    re-issues the serial from the new date's counter (old numbers are never reused).
+    Audited with the changed field names, never the values."""
+    caller = guards.require(ctx, "edit_approved_registration")
+    try:
+        return EditResult.model_validate(ops.edit_approved(token, fields, caller.actor))
+    except (ops.NotFound, ops.InvalidState, ops.Invalid) as e:
+        raise _as_tool_error(e)
+
+
 # ── destructive tools, confirmed by Multi Round-Trip Request (spec §4.4) ────────────
 
 
@@ -387,6 +433,37 @@ async def purge_month(
         return PurgeResult.model_validate(ops.purge(period, rep.entry_count, caller.actor))
     except ops.PurgeAborted as e:
         raise ToolError(str(e))
+
+
+# ── resources ────────────────────────────────────────────────────────────────────────
+
+
+def _require_resource(uri: str, *scopes: str) -> None:
+    caller = guards.current_caller()
+    for sc in scopes:
+        if sc not in caller.scopes:
+            raise ResourceError(f"missing scope {sc}; this token cannot read {uri}")
+
+
+def _export_blob(fmt: str, export_id: str) -> bytes:
+    uri = f"export://{fmt}/{export_id}"
+    _require_resource(uri, "export", "pii:read")
+    data = ops.read_export(fmt, export_id)
+    if data is None:
+        raise ResourceNotFoundError(f"{uri} (expired or never existed; exports live EXPORT_TTL_MINUTES)")
+    return data
+
+
+@mcp.resource("export://xlsx/{export_id}", mime_type=ops.EXPORT_MIME["xlsx"], title="Authority export (XLSX)")
+def export_xlsx(export_id: str) -> bytes:
+    """Bytes of an XLSX export produced by export_authority_report. `export` + `pii:read`."""
+    return _export_blob("xlsx", export_id)
+
+
+@mcp.resource("export://pdf/{export_id}", mime_type=ops.EXPORT_MIME["pdf"], title="Authority export (PDF)")
+def export_pdf(export_id: str) -> bytes:
+    """Bytes of a PDF export produced by export_authority_report. `export` + `pii:read`."""
+    return _export_blob("pdf", export_id)
 
 
 def main() -> None:

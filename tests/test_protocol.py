@@ -17,7 +17,6 @@ async def test_tools_are_listed_in_spec_order(client):
     assert len(names) >= 8
 
 
-@pytest.mark.xfail(strict=True, reason="write/destructive tools arrive in Tasks 6-9")
 @pytest.mark.anyio
 async def test_every_spec_tool_is_registered(client):
     names = [t.name for t in (await client.list_tools()).tools]

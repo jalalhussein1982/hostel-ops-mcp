@@ -472,3 +472,153 @@ def purge(period: str, expected_count: int, actor: str) -> dict[str, Any]:
         raise PurgeAborted(f"the approved count for {period} changed while confirming ({e}); nothing was deleted") from e
     a.repo.audit(actor, "delete", period, f"{n} entries purged, snapshot {row['snapshot_name']}")
     return {"period": period, "deleted": n, "snapshot_name": row["snapshot_name"], "snapshot_sha256": row["snapshot_sha256"]}
+
+
+# ---------------------------------------------------------------- admin edit (APPROVED only)
+
+# Wizard input field names (the shape validation.validate_data_fields expects). Mirrors the
+# app's routes/guest.py _record_to_form_data, re-stated here so no FastAPI module is imported.
+EDIT_FIELDS = ("arrival", "departure", "purpose_of_stay", "last_name", "first_name", "dob",
+               "passport_no", "nationality", "visa_no", "car_reg",
+               "addr_line", "addr_postcode", "addr_city", "addr_country", "addr_structured")
+
+
+def record_to_form(rec: dict[str, Any]) -> dict[str, str]:
+    def s(v: Any) -> str:
+        return "" if v is None else str(v)
+
+    return {
+        "arrival": s(rec.get("arrival")), "departure": s(rec.get("departure")),
+        "purpose_of_stay": s(rec.get("purpose_of_stay")),
+        "last_name": s(rec.get("last_name")), "first_name": s(rec.get("first_name")), "dob": s(rec.get("dob")),
+        "passport_no": s(rec.get("passport_no")), "nationality": s(rec.get("nationality")),
+        "visa_no": s(rec.get("visa_no")), "car_reg": s(rec.get("car_reg")),
+        "addr_line": s(rec.get("addr_street")), "addr_postcode": s(rec.get("addr_postcode")),
+        "addr_city": s(rec.get("addr_city")), "addr_country": s(rec.get("addr_country")),
+        "addr_structured": "1" if rec.get("addr_structured") else "0",
+    }
+
+
+def edit_approved(token: str, fields: dict[str, Any], actor: str) -> dict[str, Any]:
+    """Merge ``fields`` into the record's wizard form, validate with the app's own validator,
+    persist through repo.update_registration (APPROVED only). Audit names the fields, never values."""
+    a = app()
+    unknown = sorted(set(fields) - set(EDIT_FIELDS))
+    if unknown:
+        raise Invalid({k: f"not editable; editable fields: {', '.join(EDIT_FIELDS)}" for k in unknown})
+    if not fields:
+        raise Invalid({"fields": "nothing to change"})
+    rec = get_registration(token)
+    if rec["state"] != a.state.State.APPROVED.value:
+        raise InvalidState(f"registration {token}", rec["state"], ["only APPROVED records can be edited"])
+    form = record_to_form(rec)
+    form.update({k: ("" if v is None else str(v)) for k, v in fields.items()})
+    res = a.validation.validate_data_fields(form)
+    if not res.ok:
+        cat = a.i18n.get_catalog("en")
+        raise Invalid({f: cat.get(k, k) for f, k in res.errors.items()})
+    try:
+        info = a.repo.update_registration(token, res.cleaned)
+    except a.repo.NotEditable as e:
+        raise InvalidState(f"registration {token}", str(e), ["only APPROVED records can be edited"])
+    except KeyError:
+        raise NotFound("registration", token, "list_approved_registrations")
+    detail = "fields: " + (", ".join(info["changed"]) or "none")
+    if info["serial"] != info["old_serial"]:
+        detail += f"; serial {info['old_serial']} -> {info['serial']}"
+    a.repo.audit(actor, "edit", period=res.cleaned["arrival"][:7], detail=detail)
+    return {"token": token, **info}
+
+
+# ---------------------------------------------------------------- authority export
+
+import hashlib  # noqa: E402
+import time  # noqa: E402
+import uuid  # noqa: E402
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+EXPORT_MIME = {
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pdf": "application/pdf",
+}
+_EXPORT_ID = re.compile(r"^[0-9a-f]{32}$")
+
+
+def export_dir() -> Path:
+    d = Path(os.environ.get("EXPORT_DIR") or ROOT / "exports")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def export_ttl() -> timedelta:
+    return timedelta(minutes=int(os.environ.get("EXPORT_TTL_MINUTES", "60")))
+
+
+def sweep_exports() -> int:
+    """Delete export files older than EXPORT_TTL_MINUTES. Runs on every export and read."""
+    cutoff = time.time() - export_ttl().total_seconds()
+    n = 0
+    for p in export_dir().iterdir():
+        if p.suffix.lstrip(".") in EXPORT_MIME and p.stat().st_mtime < cutoff:
+            p.unlink(missing_ok=True)
+            n += 1
+    return n
+
+
+def export(tokens: list[str] | None, arrival_from: str | None, arrival_to: str | None,
+           fmt: str, actor: str) -> dict[str, Any]:
+    """APPROVED rows only, through the app's export module; bytes go to EXPORT_DIR, not inline."""
+    a = app()
+    if fmt not in EXPORT_MIME:
+        raise Invalid({"format": "xlsx or pdf"})
+    if not tokens and not (arrival_from or arrival_to):
+        raise Invalid({"tokens": "give tokens[] or an arrival window (arrival_from / arrival_to)"})
+    selected: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    skipped_detail: list[str] = []
+    approved = a.state.State.APPROVED.value
+    if tokens:
+        for t in dict.fromkeys(tokens):
+            rec = a.repo.get_registration(t)
+            if rec is None:
+                skipped.append(t)
+                skipped_detail.append(f"{t}: unknown token")
+            elif rec["state"] != approved:
+                skipped.append(t)
+                skipped_detail.append(f"{t}: {rec['state']}")
+            else:
+                selected.append(rec)
+    else:
+        for rec in a.repo.list_all_approved():
+            arr = rec.get("arrival") or ""
+            if arrival_from and arr < arrival_from:
+                continue
+            if arrival_to and arr > arrival_to:
+                continue
+            selected.append(rec)
+    if not selected:
+        raise Invalid({"selection": "no approved registrations in the selection; only APPROVED rows are exported"})
+    data = a.export.build_xlsx(selected) if fmt == "xlsx" else a.export.build_pdf(selected)
+    sweep_exports()
+    export_id = uuid.uuid4().hex
+    path = export_dir() / f"{export_id}.{fmt}"
+    path.write_bytes(data)
+    now = datetime.now(timezone.utc)
+    sha = hashlib.sha256(data).hexdigest()
+    periods = sorted({(r.get("arrival") or "")[:7] for r in selected})
+    a.repo.audit(actor, "export", period=periods[0] if len(periods) == 1 else None,
+                 detail=f"{len(selected)} rows {fmt} export {export_id} sha256 {sha[:12]}; skipped {len(skipped)}")
+    return {
+        "export_id": export_id, "resource_uri": f"export://{fmt}/{export_id}", "format": fmt,
+        "rows": len(selected), "skipped": skipped, "skipped_detail": skipped_detail, "sha256": sha,
+        "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "expires_at": (now + export_ttl()).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+
+def read_export(fmt: str, export_id: str) -> bytes | None:
+    if fmt not in EXPORT_MIME or not _EXPORT_ID.match(export_id or ""):
+        return None
+    sweep_exports()
+    path = export_dir() / f"{export_id}.{fmt}"
+    return path.read_bytes() if path.is_file() else None
