@@ -1,4 +1,4 @@
-.PHONY: sync test fixtures stdio http inspector token
+.PHONY: sync test fixtures stdio http inspector token realm
 
 sync:
 	uv sync
@@ -20,3 +20,6 @@ inspector:
 
 token:
 	uv run python scripts/dev_token.py
+
+realm:
+	uv run python scripts/make_realm.py

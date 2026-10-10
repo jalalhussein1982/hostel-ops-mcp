@@ -1,0 +1,331 @@
+{
+  "realm": "hostel",
+  "enabled": true,
+  "displayName": "Demo Hostel (hostel-ops-mcp)",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "accessTokenLifespan": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "roles": {
+    "realm": [
+      {
+        "name": "admin",
+        "description": "Every scope, incl. admin:read/write/erase."
+      },
+      {
+        "name": "group_manager",
+        "description": "Desk + groups + export + pii."
+      },
+      {
+        "name": "receptionist",
+        "description": "Desk + export + pii; no groups, no admin."
+      }
+    ]
+  },
+  "clientScopes": [
+    {
+      "name": "mcp",
+      "description": "May call this MCP server at all (required_scopes).",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "May call this MCP server at all (required_scopes)."
+      },
+      "protocolMappers": [
+        {
+          "name": "hostel-ops audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "http://127.0.0.1:8000/mcp",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "lightweight.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "desk:read",
+      "description": "Registration reads: queue, approved list, one record, minor alerts.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "Registration reads: queue, approved list, one record, minor alerts."
+      },
+      "protocolMappers": []
+    },
+    {
+      "name": "desk:write",
+      "description": "approve_registration, return_registration.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "approve_registration, return_registration."
+      },
+      "protocolMappers": []
+    },
+    {
+      "name": "groups:read",
+      "description": "Group reads.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "Group reads."
+      },
+      "protocolMappers": []
+    },
+    {
+      "name": "groups:write",
+      "description": "create_group_link, resend_group_invite.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "create_group_link, resend_group_invite."
+      },
+      "protocolMappers": []
+    },
+    {
+      "name": "export",
+      "description": "export_authority_report and export:// resources (also needs pii:read).",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "export_authority_report and export:// resources (also needs pii:read)."
+      },
+      "protocolMappers": []
+    },
+    {
+      "name": "pii:read",
+      "description": "Unmasked document numbers, dates of birth, addresses, signatures, leader contacts.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "Unmasked document numbers, dates of birth, addresses, signatures, leader contacts."
+      },
+      "protocolMappers": []
+    },
+    {
+      "name": "admin:read",
+      "description": "month_summary, audit_log.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "month_summary, audit_log."
+      },
+      "protocolMappers": []
+    },
+    {
+      "name": "admin:write",
+      "description": "edit_approved_registration.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "edit_approved_registration."
+      },
+      "protocolMappers": []
+    },
+    {
+      "name": "admin:erase",
+      "description": "erase_registration, purge_month.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "erase_registration, purge_month."
+      },
+      "protocolMappers": []
+    }
+  ],
+  "defaultDefaultClientScopes": [
+    "mcp"
+  ],
+  "defaultOptionalClientScopes": [
+    "desk:read",
+    "desk:write",
+    "groups:read",
+    "groups:write",
+    "export",
+    "pii:read",
+    "admin:read",
+    "admin:write",
+    "admin:erase"
+  ],
+  "scopeMappings": [
+    {
+      "clientScope": "desk:read",
+      "roles": [
+        "receptionist",
+        "group_manager",
+        "admin"
+      ]
+    },
+    {
+      "clientScope": "desk:write",
+      "roles": [
+        "receptionist",
+        "group_manager",
+        "admin"
+      ]
+    },
+    {
+      "clientScope": "groups:read",
+      "roles": [
+        "group_manager",
+        "admin"
+      ]
+    },
+    {
+      "clientScope": "groups:write",
+      "roles": [
+        "group_manager",
+        "admin"
+      ]
+    },
+    {
+      "clientScope": "export",
+      "roles": [
+        "receptionist",
+        "group_manager",
+        "admin"
+      ]
+    },
+    {
+      "clientScope": "pii:read",
+      "roles": [
+        "receptionist",
+        "group_manager",
+        "admin"
+      ]
+    },
+    {
+      "clientScope": "admin:read",
+      "roles": [
+        "admin"
+      ]
+    },
+    {
+      "clientScope": "admin:write",
+      "roles": [
+        "admin"
+      ]
+    },
+    {
+      "clientScope": "admin:erase",
+      "roles": [
+        "admin"
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "hostel-ops-inspector",
+      "name": "MCP Inspector (hostel-ops)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "redirectUris": [
+        "http://localhost:6274/oauth/callback",
+        "http://127.0.0.1:6274/oauth/callback",
+        "http://localhost:6274/oauth/callback/debug",
+        "http://127.0.0.1:8000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:6274",
+        "http://127.0.0.1:6274"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
+      },
+      "defaultClientScopes": [
+        "mcp",
+        "profile",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "desk:read",
+        "desk:write",
+        "groups:read",
+        "groups:write",
+        "export",
+        "pii:read",
+        "admin:read",
+        "admin:write",
+        "admin:erase"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "firstName": "Ada",
+      "lastName": "Admin",
+      "email": "admin@example.invalid",
+      "emailVerified": true,
+      "realmRoles": [
+        "admin"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "changeme",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "group_manager",
+      "enabled": true,
+      "firstName": "Gil",
+      "lastName": "Groups",
+      "email": "group_manager@example.invalid",
+      "emailVerified": true,
+      "realmRoles": [
+        "group_manager"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "changeme",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "receptionist",
+      "enabled": true,
+      "firstName": "Rea",
+      "lastName": "Desk",
+      "email": "receptionist@example.invalid",
+      "emailVerified": true,
+      "realmRoles": [
+        "receptionist"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "changeme",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

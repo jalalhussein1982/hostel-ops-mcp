@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import os
 from typing import Annotated, Any, Literal
 
@@ -36,9 +37,9 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import Context, RequestStateSecurity
 from mcp.server.mcpserver.exceptions import ResourceError, ResourceNotFoundError, ToolError
 from mcp.types import InputRequiredResult, ToolAnnotations
-from pydantic import Field
+from pydantic import BaseModel, Field
 
-from . import confirm, guards, ops, redact
+from . import confirm, guards, ops, policy, redact
 from .models import (
     ApprovalResult, AuditRow, Cancelled, EditResult, EraseResult, ExportResult, GroupCard, GroupDetail, GroupLink, GroupMemberRow,
     MinorAlert, MonthRow, PurgeResult, Registration, RegistrationCard, RegistrationPage, ReturnResult, SignatureInfo,
@@ -55,6 +56,25 @@ INSTRUCTIONS = (
 )
 
 
+POLICY_PREFIX = "hostel://policy/"
+POLICY_TTL_MS = 3_600_000
+
+
+async def cache_directives(ctx, call_next):
+    """Spec §5: policy resources are public for an hour; records are private and immediately stale.
+
+    The SDK stamps ttlMs=0 / cacheScope=private on every 2026-07-28 read by default; this
+    middleware overrides the two policy URIs. Results may arrive as a model or a wire mapping."""
+    result = await call_next(ctx)
+    if ctx.method != "resources/read" or not (ctx.params or {}).get("uri", "").startswith(POLICY_PREFIX):
+        return result
+    if isinstance(result, BaseModel):
+        return result.model_copy(update={"ttl_ms": POLICY_TTL_MS, "cache_scope": "public"})
+    if isinstance(result, dict):
+        return {**result, "ttlMs": POLICY_TTL_MS, "cacheScope": "public"}
+    return result
+
+
 def create_server(*, token_verifier: TokenVerifier | None = None, auth: AuthSettings | None = None,
                   request_state_security: RequestStateSecurity | None = None) -> MCPServer:
     """Build a server with every tool, resource and prompt registered in spec order.
@@ -63,7 +83,7 @@ def create_server(*, token_verifier: TokenVerifier | None = None, auth: AuthSett
     with ``STDIO_SCOPES``; with them its Streamable HTTP app is an OAuth 2.1 resource server.
     """
     mcp = MCPServer("hostel-ops", instructions=INSTRUCTIONS, token_verifier=token_verifier, auth=auth,
-                    request_state_security=request_state_security)
+                    request_state_security=request_state_security, middleware=[cache_directives])
     _register(mcp)
     return mcp
 
@@ -477,6 +497,78 @@ def _register(mcp: MCPServer) -> None:
     def export_pdf(export_id: str) -> bytes:
         """Bytes of a PDF export produced by export_authority_report. `export` + `pii:read`."""
         return _export_blob("pdf", export_id)
+
+
+    @mcp.resource("hostel://policy/roles", mime_type="text/markdown", title="Scopes, tools and the field policy")
+    def policy_roles() -> str:
+        """The scope -> tool matrix and the per-column redaction policy. Quote it; do not guess."""
+        return policy.roles_text()
+
+    @mcp.resource("hostel://policy/retention", mime_type="text/markdown", title="Retention and erasure")
+    def policy_retention() -> str:
+        """Legal basis, retention, erasure position and the purge guard, in the words of the app's privacy notice."""
+        return policy.retention_text()
+
+    @mcp.resource("hostel://registration/{token}", mime_type="application/json", title="One registration")
+    async def registration_resource(token: str, ctx: Context) -> str:
+        """Same document get_registration returns, as a resource. desk:read."""
+        _require_resource(f"hostel://registration/{token}", "desk:read")
+        try:
+            reg = await get_registration(ctx, token)   # the tool function, with its own guard and redaction
+        except ToolError as e:
+            raise ResourceNotFoundError(str(e))
+        return reg.model_dump_json()
+
+    @mcp.resource("hostel://group/{slug}", mime_type="application/json", title="One group")
+    async def group_resource(slug: str, ctx: Context) -> str:
+        """Same document get_group returns, as a resource. groups:read."""
+        _require_resource(f"hostel://group/{slug}", "groups:read")
+        try:
+            g = await get_group(ctx, slug)
+        except ToolError as e:
+            raise ResourceNotFoundError(str(e))
+        return g.model_dump_json()
+
+    # ── prompts ──────────────────────────────────────────────────────────────────────
+
+    @mcp.prompt(title="Morning desk briefing")
+    def morning_desk_briefing() -> str:
+        """The receptionist's handover note, in the house format, from three read tools."""
+        return (
+            "You are preparing the morning handover for the hostel reception desk. Call "
+            "list_pending_registrations (walk every page), desk_minor_alerts, and "
+            "list_groups with status=pending. Then write the handover in this format:\n\n"
+            "1. Arrivals today: pending registrations whose arrival is today, oldest first, with "
+            "name, nationality, nights and the 4-digit code.\n"
+            "2. Minors: every alert, stating whether a legal representative's signature is still "
+            "needed before approval (needs_legal_representative).\n"
+            "3. Groups awaiting members: pending groups with arrival date, filled/total rows and "
+            "whether the invite was sent.\n"
+            "4. Anything RETURNED older than 24 hours (compare return state and updated_at from "
+            "get_registration on RETURNED tokens you know about) that the guest has not resubmitted.\n\n"
+            "Use the masked document numbers exactly as returned; never guess a full number. Do not "
+            "approve or return anything in this briefing."
+        )
+
+    @mcp.prompt(title="Authority export checklist")
+    def authority_export_checklist(
+        period: Annotated[str, Field(description="Arrival month, YYYY-MM.")],
+    ) -> str:
+        """Steps and checks before a month's registration export leaves the building."""
+        return (
+            f"Prepare the registration export for {period} for the foreign police.\n\n"
+            f"1. Call month_summary and confirm {period} appears with its live_count; note whether "
+            "the month is backed up and verified.\n"
+            f"2. Call list_approved_registrations with arrival_from={period}-01 and arrival_to the last "
+            "day of the month, walking every page; confirm the count equals live_count.\n"
+            "3. Call desk_minor_alerts and list any under-15 whose signature is not by a legal "
+            "representative; those records must be fixed on the desk before export.\n"
+            "4. Check that no row in the window is PENDING_REVIEW or RETURNED (they are not exported; "
+            "say so explicitly if any exist).\n"
+            f"5. Call export_authority_report with arrival_from/arrival_to for {period} and format=xlsx. "
+            "Report rows, skipped, sha256 and the resource_uri. Read hostel://policy/retention and "
+            "remind the operator that the export contains document numbers and must be handled as such."
+        )
 
 
 # ── wiring ───────────────────────────────────────────────────────────────────────────
