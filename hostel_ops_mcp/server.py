@@ -37,7 +37,7 @@ from pydantic import Field
 from . import confirm, guards, ops, redact
 from .models import (
     ApprovalResult, AuditRow, Cancelled, EraseResult, GroupCard, GroupDetail, GroupLink, GroupMemberRow,
-    MinorAlert, MonthRow, Registration, RegistrationCard, RegistrationPage, ReturnResult, SignatureInfo,
+    MinorAlert, MonthRow, PurgeResult, Registration, RegistrationCard, RegistrationPage, ReturnResult, SignatureInfo,
 )
 
 mcp = MCPServer(
@@ -352,6 +352,41 @@ async def erase_registration(
         return Cancelled(reason="declined" if outcome.action == "decline" else "cancelled",
                          message=f"Registration {who} was not erased.")
     return EraseResult.model_validate(ops.erase(token, caller.actor))
+
+
+@mcp.tool(annotations=_destructive("Purge month"))
+async def purge_month(
+    ctx: Context,
+    period: Annotated[str, Field(description="Arrival month, YYYY-MM.")],
+) -> PurgeResult | Cancelled | InputRequiredResult:
+    """Purge one arrival month's APPROVED registrations after the human confirms.
+
+    The app's delete guard runs first, before any question: backup configured, a
+    verified backup row for the month, live rows present, live count equal to the
+    backed-up count, and the encrypted snapshot on disk, decrypting and re-verifying.
+    A failing guard is an error naming the reason; only a purge that is actually allowed
+    is ever put to the human, and the confirmation quotes the entry count and the
+    snapshot checksum. Accept deletes atomically (the app re-checks the count inside
+    the transaction); decline cancels."""
+    caller = guards.require(ctx, "purge_month")
+    rep = ops.purge_guard(period)
+    if not rep.ok:
+        raise ToolError(rep.message.format(period=period))
+    message = (
+        f"Purge {period}: delete {rep.entry_count} approved registrations whose verified encrypted "
+        f"snapshot {rep.snapshot_name} (sha256 {rep.snapshot_sha256[:12]}…) is on file? "
+        "The live rows and their signatures are removed; the snapshot remains. This cannot be undone."
+    )
+    outcome = confirm.confirm_or_request(ctx, "confirm", message, state=f"purge:{period}:{rep.entry_count}")
+    if outcome.status == "ask":
+        return outcome.result
+    if outcome.status == "declined":
+        return Cancelled(reason="declined" if outcome.action == "decline" else "cancelled",
+                         message=f"{period} was not purged.")
+    try:
+        return PurgeResult.model_validate(ops.purge(period, rep.entry_count, caller.actor))
+    except ops.PurgeAborted as e:
+        raise ToolError(str(e))
 
 
 def main() -> None:

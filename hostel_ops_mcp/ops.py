@@ -369,3 +369,106 @@ def erase(token: str, actor: str) -> dict[str, Any]:
                  detail=f"registration {token} serial={rec.get('serial')} erased"
                         + (f"; group {result['removed_group']} removed" if result["removed_group"] else ""))
     return {"token": token, "deleted": result["deleted"], "removed_group": result["removed_group"]}
+
+
+# ---------------------------------------------------------------- month purge guard
+
+import re  # noqa: E402
+import tempfile  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
+
+PERIOD_RE = re.compile(r"^\d{4}-\d{2}$")
+
+GUARD_MESSAGES = {
+    "bad_period": "period must look like YYYY-MM",
+    "backup_not_configured": "backup is not configured on this server (BACKUP_ENCRYPTION_KEY unset); nothing can be purged",
+    "no_verified_backup": "no verified backup is logged for {period}; run the month backup in the admin panel first",
+    "nothing_to_purge": "nothing to purge: {period} has no approved registrations",
+    "count_mismatch": "count mismatch: {live} approved rows live but the verified backup holds {entry_count}; back the month up again",
+    "missing_snapshot": "the snapshot file {snapshot} is not on this machine; the purge needs the encrypted snapshot to re-verify",
+    "decrypt_failed": "the snapshot {snapshot} does not decrypt with the configured key",
+    "verify_failed": "the snapshot {snapshot} failed verification ({check}: {detail}); do not purge",
+}
+
+
+@dataclass
+class GuardReport:
+    ok: bool
+    reason: str | None
+    entry_count: int
+    snapshot_sha256: str | None = None
+    snapshot_name: str | None = None
+    live_count: int = 0
+    detail: str = ""
+
+    @property
+    def message(self) -> str:
+        if self.ok:
+            return "ok"
+        return GUARD_MESSAGES[self.reason].format(
+            period="{period}", live=self.live_count, entry_count=self.entry_count,
+            snapshot=self.snapshot_name, check=self.detail.partition(":")[0], detail=self.detail.partition(":")[2].strip(),
+        )
+
+
+def backup_key() -> str:
+    return (os.environ.get("BACKUP_ENCRYPTION_KEY") or app().config.settings.backup_encryption_key or "").strip()
+
+
+def purge_guard(period: str) -> GuardReport:
+    """The app's _delete_guard, re-implemented: every check must pass before anyone is asked.
+
+    Order: period shape, backup configured, verified backup row, live rows exist (a month
+    with nothing approved is refused as 'nothing to purge' even when a backup row exists),
+    live count equals the backed-up count, snapshot file present, decrypts, re-verifies.
+    """
+    a = app()
+    if not PERIOD_RE.match(period or ""):
+        return GuardReport(False, "bad_period", 0)
+    key = backup_key()
+    if not key:
+        return GuardReport(False, "backup_not_configured", 0)
+    row = a.repo.backup_log_get(period)
+    if row is None or not row["verified"]:
+        return GuardReport(False, "no_verified_backup", 0)
+    live = a.repo.count_approved_for_period(period)
+    rep = GuardReport(True, None, row["entry_count"], row["snapshot_sha256"], row["snapshot_name"], live)
+    if live == 0:
+        return GuardReport(False, "nothing_to_purge", row["entry_count"], row["snapshot_sha256"], row["snapshot_name"], live)
+    if live != row["entry_count"]:
+        rep.ok, rep.reason = False, "count_mismatch"
+        return rep
+    enc = Path(a.config.settings.backup_dir) / row["snapshot_name"]
+    if not enc.is_file():
+        rep.ok, rep.reason = False, "missing_snapshot"
+        return rep
+    from cryptography.fernet import InvalidToken
+
+    with tempfile.TemporaryDirectory() as tmp:
+        rt = Path(tmp) / f"{period}.rt.db"
+        try:
+            a.backup.decrypt_to_file(str(enc), str(rt), key)
+        except (InvalidToken, ValueError):
+            rep.ok, rep.reason = False, "decrypt_failed"
+            return rep
+        report = a.backup.verify_snapshot(str(rt), expected_count=row["entry_count"], expected_sha256=row["snapshot_sha256"])
+        if not report.ok:
+            check, msg = report.first_failure
+            rep.ok, rep.reason, rep.detail = False, "verify_failed", f"{check}: {msg}"
+            return rep
+    return rep
+
+
+class PurgeAborted(Exception):
+    """delete_period found a different live count inside its write transaction."""
+
+
+def purge(period: str, expected_count: int, actor: str) -> dict[str, Any]:
+    a = app()
+    row = a.repo.backup_log_get(period)
+    try:
+        n = a.repo.delete_period(period, expected_count)
+    except a.repo.CountChanged as e:
+        raise PurgeAborted(f"the approved count for {period} changed while confirming ({e}); nothing was deleted") from e
+    a.repo.audit(actor, "delete", period, f"{n} entries purged, snapshot {row['snapshot_name']}")
+    return {"period": period, "deleted": n, "snapshot_name": row["snapshot_name"], "snapshot_sha256": row["snapshot_sha256"]}
