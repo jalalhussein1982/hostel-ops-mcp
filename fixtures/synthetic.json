@@ -1,0 +1,95 @@
+{
+  "counts": {
+    "APPROVED": 30,
+    "DRAFT": 10,
+    "PENDING_REVIEW": 15,
+    "RETURNED": 5
+  },
+  "draft_with_partial_fields": "Zg1zdK2APztdjgEt4-TySz7_WuupH_sj",
+  "group_members": 11,
+  "groups": {
+    "pending": "ZduoklDgDrLXR7UQwAjIcpUgiGh1uVd8",
+    "submitted_visible": "c7GZtGZ_7aktK3EttaxguFjkLVUVfk-I",
+    "submitted_with_duplicates": "rE49eUKQ--loxoiDKwuwk3I6-pYj0xn8"
+  },
+  "minor_tokens": {
+    "approved_under15_legal_rep": "B5GCPYu9X0n3rtxFHHfoErXztwHIW47p",
+    "pending_under15_self": "O_cuX7OfIsTdofo7GbngvgJRtJ4rYFKU",
+    "pending_under18": "eL7Z95VzQ88-n8yfmCXAyrduRPHe-cuC"
+  },
+  "periods": [
+    "2026-08",
+    "2026-09"
+  ],
+  "seed": 1982,
+  "tokens": {
+    "APPROVED": [
+      "A5rF-mEntPjKpbu-pCwhHTwSasCx8z72",
+      "V7KXK6yRbckNXouqIgmGdte1XqYIQ7ZW",
+      "4OH_WmvrC4l3vI2iigwf-ppiohDJ78O8",
+      "chgdeExF8U7oweWLWvdN3TNly5jctL7e",
+      "RSwEYw8agrkb2oeZFp8rJ0w-4CBpDFJL",
+      "UpAkzXGsM9YMKWqPxYoBn7f7uiXviihv",
+      "ZBUNzWBKwW_pZ-iABAuGJxpqJEpf9GFS",
+      "B5GCPYu9X0n3rtxFHHfoErXztwHIW47p",
+      "7YGyKSermYWg32fAQGNpRGuQDD_aLkG1",
+      "p_wq6xgXNnTmsdj3sE-qqO3CEezoH9oc",
+      "4VgxaI6jrbqXTLaOm4AJPIh97NzqEc-C",
+      "rglTbkwrBJLhmK7lo_D_qaM6AJQCGuuC",
+      "i1CThttFHYpL7xJlUnTyQhgxCwiOxe_C",
+      "Dboy8IGGOS45wF0EDTVhwRHO2kCI1-a-",
+      "n4nLnbRHW-KMYkONP1_grkNF6GmXEy2N",
+      "S0WiVXLQ7LFlSKe_1QtiVfvLvskWpqLT",
+      "9GiY2M1aqh3xWIz4m824FMYy5RcWBIvI",
+      "CJuKJu6vny1CWgz0e_E4nGeu7B2rs38F",
+      "D3JFIKnlR_198HV9w1bTMIbQNPIqLDup",
+      "wRsHj35dIpdPWu2TxatGD2mRAvaZMcAB",
+      "fuzv74fIwBao0uGnE6JvXvaZNw5tfmlN",
+      "uZOmyr723x4aFxMSri2sheyR8Fx4Ja9A",
+      "9qvvMSs6uhjEvRo0XKqwmy7dTURK4jQX",
+      "kKWbrOYDPzft3abszpjD5taODhdVrKKK",
+      "-ni-_yVo3oGkG4JoFKUtVvWwpKWcygJ_",
+      "H_6LOZTVGObwbicdUl1jnn9VFWZSntHa",
+      "42R-2S-jcVgxFnO_nbgxTXW5EwQNMk4O",
+      "6b5yS8WTg5zabZTDczKHwhrmnMjFGNy1",
+      "FHub594JK23LwPuxReYowbXdG2meRFQu",
+      "tX3HqezlrTF-fMQAWOeVB1p-WafmGy2J"
+    ],
+    "DRAFT": [
+      "Zg1zdK2APztdjgEt4-TySz7_WuupH_sj",
+      "9-JtWBL_mqLTzl0pnQp0hXI5KgDDOJsS",
+      "nhrOFSTfFn5y2z69629LtrhEZjlJHjEE",
+      "IYL7ig9uyhAIY_p8StT_JB-Fn9b7CViA",
+      "qcuGeVTigv0jFtg6za9Z7Qg0ShGctvUy",
+      "sVNtpyDJvxrAhglLMcd5xEcrPUFzzyJ3",
+      "4o8pm3NV6Q0hEKKcM-dE4eAEJXniYxE8",
+      "3-ThJlBUdrSwbEmUerdCxn8vtqoRc2E-",
+      "PJ5V449qMRIBdOU44nx6uT3UmJGwXUjn",
+      "X8tSo5rFzVCQYt-r2wovIJKkiIpcBBr_"
+    ],
+    "PENDING_REVIEW": [
+      "lNft8MglJKdrN61RsjARlHn09BY41lgv",
+      "HRDr7b2F06_kT2J_n4pDYMzf8ZCr_Z3a",
+      "8kMhP3ejpf3tP68ZfG7Rv0eZpf1plcCu",
+      "kZflJwKj1JdcqmauVZVNELbS4wkAviH6",
+      "eL7Z95VzQ88-n8yfmCXAyrduRPHe-cuC",
+      "FVgUJmNej2i9scWaeLv-P4i8owLJ6FT2",
+      "Q8n2wb9xnfNJ3glmycEDo0zEdy9D-3jR",
+      "5nsW687LDfBPUC9ubST2rTBIiP_Ue39e",
+      "3lrI_dtE7qY4lHD3ejW9gKlMPqthaFWP",
+      "O_cuX7OfIsTdofo7GbngvgJRtJ4rYFKU",
+      "rDVc7f9czfxm24SPaCVEFbOBtBc4YDco",
+      "VrC-YaxWJiV3RHssKTmaqk6oeAOE8uK6",
+      "5uMTG7ibMq_a8VMR0My4XooSjkTa1q8A",
+      "C0KQqSGGMfKdsR0d369KB0bA_f50mpKv",
+      "aOCnTCIfvcDpJgHwqbUoTBZBdEk_LaRS"
+    ],
+    "RETURNED": [
+      "xsscWAOIg3WuUbh3rTX9IBxWHqYDumux",
+      "G9OfoWA4xIaICXt_EoQZ73pbkDVrh8eZ",
+      "gVMF4GJOtKiqAYbCwe0Bn2WnGvtt-seO",
+      "TLTqX-OQw_ghNpIEban6MdB3rI6dKsvF",
+      "RfwW9itoRMvMubC2lgNOjlTyRkTjjGqd"
+    ]
+  }
+}
