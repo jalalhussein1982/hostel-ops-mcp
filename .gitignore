@@ -11,3 +11,5 @@ dist/
 exports/
 data/
 uv.lock.bak
+fixtures/dev-jwks.json
+.dev/
