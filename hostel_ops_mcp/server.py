@@ -31,13 +31,13 @@ from typing import Annotated, Any, Literal
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import ToolAnnotations
+from mcp.types import InputRequiredResult, ToolAnnotations
 from pydantic import Field
 
-from . import guards, ops, redact
+from . import confirm, guards, ops, redact
 from .models import (
-    ApprovalResult, AuditRow, GroupCard, GroupDetail, GroupLink, GroupMemberRow, MinorAlert, MonthRow,
-    Registration, RegistrationCard, RegistrationPage, ReturnResult, SignatureInfo,
+    ApprovalResult, AuditRow, Cancelled, EraseResult, GroupCard, GroupDetail, GroupLink, GroupMemberRow,
+    MinorAlert, MonthRow, Registration, RegistrationCard, RegistrationPage, ReturnResult, SignatureInfo,
 )
 
 mcp = MCPServer(
@@ -311,6 +311,47 @@ async def resend_group_invite(
         return GroupLink.model_validate(ops.resend_group_invite(slug, receiver_email, caller.actor))
     except (ops.NotFound, ops.InvalidState, ops.Invalid) as e:
         raise _as_tool_error(e)
+
+
+# ── destructive tools, confirmed by Multi Round-Trip Request (spec §4.4) ────────────
+
+
+def _destructive(title: str) -> ToolAnnotations:
+    return ToolAnnotations(title=title, read_only_hint=False, destructive_hint=True,
+                           idempotent_hint=False, open_world_hint=False)
+
+
+@mcp.tool(annotations=_destructive("Erase registration"))
+async def erase_registration(
+    ctx: Context,
+    token: Annotated[str, Field(description="Registration token to erase.")],
+) -> EraseResult | Cancelled | InputRequiredResult:
+    """Erase one registration after the human confirms.
+
+    First call: returns a confirmation request naming the serial and arrival date and
+    stating the legal position (Act 326/1999 requires the hostel to keep registrations;
+    erasure is limited to records no longer required). The host shows it to the human
+    and retries with the answer. Accept with confirm=true deletes the row and its
+    signature and writes an audit row; decline returns a cancelled result. Hosts that
+    cannot ask get an error instead and must use the admin panel."""
+    caller = guards.require(ctx, "erase_registration")
+    try:
+        rec = ops.get_registration(token)
+    except ops.NotFound as e:
+        raise _not_found(e)
+    who = rec.get("serial") or token
+    message = (
+        f"Erase registration {who} (arrival {rec.get('arrival') or 'not set'}, state {rec['state']})? "
+        "Legal basis is Act 326/1999; erasure is limited to records no longer required. "
+        "This cannot be undone."
+    )
+    outcome = confirm.confirm_or_request(ctx, "confirm", message, state=f"erase:{token}")
+    if outcome.status == "ask":
+        return outcome.result
+    if outcome.status == "declined":
+        return Cancelled(reason="declined" if outcome.action == "decline" else "cancelled",
+                         message=f"Registration {who} was not erased.")
+    return EraseResult.model_validate(ops.erase(token, caller.actor))
 
 
 def main() -> None:

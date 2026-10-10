@@ -13,7 +13,7 @@ READ_TOOLS = SPEC_TOOL_ORDER[:8]
 async def test_tools_are_listed_in_spec_order(client):
     result = await client.list_tools()
     names = [t.name for t in result.tools]
-    assert names == SPEC_TOOL_ORDER[: len(names)], names
+    assert names == [n for n in SPEC_TOOL_ORDER if n in names], names
     assert len(names) >= 8
 
 

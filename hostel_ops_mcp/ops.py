@@ -355,3 +355,17 @@ def resend_group_invite(slug: str, receiver_email: str | None, actor: str, send_
     a.repo.audit(actor, "group_invite", period=group["arrival"][:7], detail=f"{slug} resent")
     return {"slug": slug, "portal_url": portal_url, "member_url": member_url, "portal_password": password,
             "email_sent": sent, "receiver_email": email}
+
+
+# ---------------------------------------------------------------- destructive (confirmed by the caller)
+
+def erase(token: str, actor: str) -> dict[str, Any]:
+    """Hard-delete one registration (signature cascades). If it was the last member of a
+    group, the group request goes too, as the desk's delete does. Audited as `delete`."""
+    a = app()
+    rec = get_registration(token)
+    result = a.groups.delete_member(token)
+    a.repo.audit(actor, "delete", period=(rec.get("arrival") or "")[:7] or None,
+                 detail=f"registration {token} serial={rec.get('serial')} erased"
+                        + (f"; group {result['removed_group']} removed" if result["removed_group"] else ""))
+    return {"token": token, "deleted": result["deleted"], "removed_group": result["removed_group"]}
