@@ -38,17 +38,31 @@ def _cases():
             yield pytest.param(tool, required - {s}, s, id=f"{tool}-missing-{s}")
 
 
+async def _accept(context, params):
+    from mcp.types import ElicitResult
+
+    return ElicitResult(action="accept", content={"confirm": True})
+
+
+# Tools whose allowed-scope call cannot succeed on the bare fixture, and the exact reason.
+EXPECTED_NON_SCOPE_ERROR = {
+    "purge_month": "backup is not configured",   # the guard refuses before any question; a scope error would read 'missing scope'
+}
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize("tool,scopes,missing", list(_cases()))
-async def test_scope_matrix(tool, scopes, missing, client_with_scopes, planted):
-    async with client_with_scopes(scopes) as c:
+async def test_scope_matrix(tool, scopes, missing, client_with_scopes, planted, monkeypatch):
+    monkeypatch.delenv("BACKUP_ENCRYPTION_KEY", raising=False)
+    async with client_with_scopes(scopes, elicitation_callback=_accept) as c:
         registered = {t.name for t in (await c.list_tools()).tools}
-        if tool not in registered:
-            pytest.skip(f"{tool} not registered yet")
+        assert tool in registered, f"{tool} is in the spec but not registered"
         r = await c.call_tool(tool, _args(tool, planted))
     if missing is None:
-        text = r.content[0].text if r.content else ""
-        assert "missing scope" not in text, text
+        if tool in EXPECTED_NON_SCOPE_ERROR:
+            assert r.is_error and EXPECTED_NON_SCOPE_ERROR[tool] in r.content[0].text, r.content[0].text
+        else:
+            assert r.is_error is False, r.content[0].text if r.content else r
     else:
         assert r.is_error, f"{tool} ran without {missing}"
         text = r.content[0].text
