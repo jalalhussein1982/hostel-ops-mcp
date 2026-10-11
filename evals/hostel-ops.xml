@@ -1,0 +1,48 @@
+<!--
+  Read-only evaluation set for hostel-ops-mcp over fixtures/synthetic.db (seed 1982).
+  Every answer was computed by calling the server's tools on the pristine fixture
+  (scripts/capture_use_cases.py, "EVAL ANSWERS" section). Scopes needed:
+  desk:read, groups:read, admin:read. No question needs pii:read or a write.
+-->
+<evaluation>
+  <qa_pair>
+    <question>How many registrations are currently waiting in the pending-review queue?</question>
+    <answer>15</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>How many of the pending registrations belong to guests who are under 18 on their arrival date?</question>
+    <answer>2</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>One pending minor still needs a legal representative's signature before the desk may approve the card. What is that guest's surname?</question>
+    <answer>Detiha</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>How many pending registrations arrive on 2026-10-11?</question>
+    <answer>12</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>How many pending registrations give "business" as the purpose of stay?</question>
+    <answer>7</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>How many approved individual registrations have an arrival date in August 2026?</question>
+    <answer>15</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which arrival month has a verified backup, and how many entries does that backup hold?</question>
+    <answer>2026-08, 15 entries</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>How many group pre-registrations are still pending (portal open) and how many have been submitted?</question>
+    <answer>1 pending, 2 submitted</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which submitted group contains the same person entered twice, and how many such duplicate pairs does it have?</question>
+    <answer>Eastmere School Choir, 1 duplicate pair</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>How many people (leader included) are registered under the Northvale Rowing Club group?</question>
+    <answer>5</answer>
+  </qa_pair>
+</evaluation>

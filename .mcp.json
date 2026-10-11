@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "hostel-ops": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "hostel_ops_mcp.server", "--stdio"],
+      "env": {
+        "STDIO_SCOPES": "desk:read,groups:read,admin:read"
+      }
+    }
+  }
+}
