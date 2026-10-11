@@ -320,7 +320,8 @@ def _register(mcp: MCPServer) -> None:
         password and emails the invite (in synthetic mode the email is recorded, not sent).
 
         The password appears in this result once. The server stores only its argon2 hash;
-        use resend_group_invite to issue a new one."""
+        use resend_group_invite to issue a new one. Needs `groups:write` and `pii:read`: the
+        password opens the leader portal, which shows every member's data."""
         caller = guards.require(ctx, "create_group_link")
         fields = {"group_name": group_name, "leader_first_name": leader_first_name,
                   "leader_last_name": leader_last_name, "arrival": arrival, "departure": departure,

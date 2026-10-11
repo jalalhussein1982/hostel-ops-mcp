@@ -70,3 +70,9 @@ def test_scope_table_covers_every_spec_tool_and_only_known_scopes():
     for role, ss in guards.ROLE_SCOPES.items():
         assert set(ss) <= ALL_SCOPES, role
     assert set(guards.ROLE_SCOPES["admin"]) == ALL_SCOPES
+
+
+def test_tools_that_hand_out_a_portal_password_need_pii_read():
+    """The portal password unlocks the vendor's leader portal, which serves member PII."""
+    for tool in ("create_group_link", "resend_group_invite"):
+        assert set(guards.TOOL_SCOPES[tool]) == {"groups:write", "pii:read"}, tool

@@ -32,8 +32,8 @@ TOOL_SCOPES: dict[str, tuple[str, ...]] = {
     "audit_log": ("admin:read",),
     "approve_registration": ("desk:write",),
     "return_registration": ("desk:write",),
-    "create_group_link": ("groups:write",),
-    "resend_group_invite": ("groups:write",),
+    "create_group_link": ("groups:write", "pii:read"),      # the result carries the portal password
+    "resend_group_invite": ("groups:write", "pii:read"),
     "export_authority_report": ("export", "pii:read"),
     "edit_approved_registration": ("admin:write", "pii:read"),
     "erase_registration": ("admin:erase",),
@@ -102,8 +102,9 @@ def roles_markdown() -> str:
         grants = [t for t, ss in TOOL_SCOPES.items() if scope in ss]
         grants += [u for u, ss in RESOURCE_SCOPES.items() if scope in ss]
         lines.append(f"| `{scope}` | {', '.join(roles)} | {', '.join(f'`{g}`' for g in grants) or '—'} |")
-    lines += ["", "Every tool requires every scope listed for it; `export_authority_report` and "
-              "`edit_approved_registration` need `pii:read` as well as their own scope. Write "
+    lines += ["", "Every tool requires every scope listed for it; `export_authority_report`, "
+              "`edit_approved_registration`, `create_group_link` and `resend_group_invite` need `pii:read` "
+              "as well as their own scope (the last two return a portal password that unlocks member data). Write "
               "scopes do not imply read scopes.", "",
               f"Over stdio (no OAuth) the server runs with `STDIO_SCOPES` (default `{DEFAULT_STDIO_SCOPES}`)."]
     return "\n".join(lines)

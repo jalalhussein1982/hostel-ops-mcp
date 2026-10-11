@@ -95,8 +95,8 @@ Registration order is the listing order. Annotations are the real ones.
 | `audit_log(limit)` | `admin:read` | read-only | `admin_audit`, newest first |
 | `approve_registration(token)` | `desk:write` | idempotent, non-destructive | PENDING_REVIEW → APPROVED through the state machine; `already_approved` on retry |
 | `return_registration(token, reason, step)` | `desk:write` | non-destructive | PENDING_REVIEW → RETURNED with reason and wizard page |
-| `create_group_link(...)` | `groups:write` | open-world (email) | Creates the group request; returns portal links and the password once |
-| `resend_group_invite(slug, receiver_email?)` | `groups:write` | open-world | New password, optional corrected email |
+| `create_group_link(...)` | `groups:write` + `pii:read` | open-world (email) | Creates the group request; returns portal links and the password once |
+| `resend_group_invite(slug, receiver_email?)` | `groups:write` + `pii:read` | open-world | New password, optional corrected email |
 | `export_authority_report(tokens \| window, format)` | `export` + `pii:read` | writes a file | APPROVED-only XLSX/PDF; bytes via `export://xlsx/{id}` or `export://pdf/{id}` |
 | `edit_approved_registration(token, fields)` | `admin:write` + `pii:read` | idempotent | Wizard-validated edit of an APPROVED record; audit names fields only |
 | `erase_registration(token)` | `admin:erase` | **destructive**, MRTR-confirmed | One record and its signature, after the human says yes |
@@ -114,7 +114,7 @@ Prompts: `morning_desk_briefing`, `authority_export_checklist(period)`.
 | `mcp` | all | may call the server at all (`required_scopes`) |
 | `desk:read` | receptionist, group_manager, admin | registration reads, minor alerts, `hostel://registration/*` |
 | `desk:write` | receptionist, group_manager, admin | approve, return |
-| `groups:read` / `groups:write` | group_manager, admin | group reads / create and resend invites |
+| `groups:read` / `groups:write` | group_manager, admin | group reads / create and resend invites (+ `pii:read`: the result carries the portal password) |
 | `export` | receptionist, group_manager, admin | authority export (+ `pii:read`) |
 | `pii:read` | receptionist, group_manager, admin by default; revocable per client | unmasked document numbers, dates of birth, addresses, signatures, leader contacts |
 | `admin:read` | admin | month summary, audit log |
