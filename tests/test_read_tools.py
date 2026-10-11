@@ -139,3 +139,18 @@ async def test_month_summary_and_audit(client):
     assert "2026-10" in by_period and "2026-11" in by_period
     audit = (await client.call_tool("audit_log", {"limit": 3})).structured_content["result"]
     assert len(audit) == 3 and audit[0]["id"] > audit[1]["id"]
+
+
+@pytest.mark.anyio
+async def test_queue_can_list_returned_rows_and_cards_carry_the_desk_code(client, planted):
+    """Finding 6: the briefing needs RETURNED records and the 4-digit desk code; both come from the desk's own /queue."""
+    returned = (await client.call_tool("list_pending_registrations", {"state": "RETURNED", "limit": 100})).structured_content
+    assert returned["total"] == 5 and {c["state"] for c in returned["items"]} == {"RETURNED"}
+    assert all(c["return_step"] in (1, 2, 3) and c["return_reason"] for c in returned["items"])
+    assert all(len(c["code"]) == 4 and c["code"].isdigit() for c in returned["items"])
+    default = (await client.call_tool("list_pending_registrations", {"limit": 100})).structured_content
+    assert default["total"] == 15 and {c["state"] for c in default["items"]} == {"PENDING_REVIEW"}
+    drafts = (await client.call_tool("list_pending_registrations", {"state": "DRAFT", "limit": 100})).structured_content
+    assert drafts["total"] == 10
+    bad = await client.call_tool("list_pending_registrations", {"state": "APPROVED"})
+    assert bad.is_error

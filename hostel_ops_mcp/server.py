@@ -124,15 +124,19 @@ def _register(mcp: MCPServer) -> None:
         ctx: Context,
         limit: Annotated[int, Field(ge=1, le=100, description="Rows per page.")] = 25,
         cursor: Annotated[str | None, Field(description="next_cursor from the previous page.")] = None,
+        state: Annotated[ops.QueueState, Field(
+            description="PENDING_REVIEW (default, the desk queue), RETURNED (sent back, not yet resubmitted) or DRAFT.")] = "PENDING_REVIEW",
     ) -> RegistrationPage:
-        """The PENDING_REVIEW queue, oldest first, as the receptionist sees it.
+        """The desk queue, oldest first, as the receptionist sees it: PENDING_REVIEW by default,
+        or the RETURNED / DRAFT rows with `state`.
 
-        Each card carries `under18` (under 18 on arrival) and `is_group_leader`. Document
-        numbers are masked unless the token holds pii:read."""
+        Each card carries `under18` (under 18 on arrival), `is_group_leader`, the 4-digit desk
+        `code`, and `return_step`/`return_reason` for RETURNED rows (the reason needs pii:read).
+        Document numbers are masked unless the token holds pii:read."""
         caller = guards.require(ctx, "list_pending_registrations")
         try:
-            rows, nxt, total = ops.list_pending(limit, cursor)
-        except ops.BadCursor as e:
+            rows, nxt, total = ops.list_pending(limit, cursor, state)
+        except (ops.BadCursor, ops.Invalid) as e:
             raise ToolError(str(e))
         return RegistrationPage(items=[_card(r, set(caller.scopes)) for r in rows], next_cursor=nxt, total=total)
 
@@ -556,18 +560,19 @@ def _register(mcp: MCPServer) -> None:
         """The receptionist's handover note, in the house format, from three read tools."""
         return (
             "You are preparing the morning handover for the hostel reception desk. Call "
-            "list_pending_registrations (walk every page), desk_minor_alerts, and "
-            "list_groups with status=pending. Then write the handover in this format:\n\n"
-            "1. Arrivals today: pending registrations whose arrival is today, oldest first, with "
-            "name, nationality, nights and the 4-digit code.\n"
-            "2. Minors: every alert, stating whether a legal representative's signature is still "
-            "needed before approval (needs_legal_representative).\n"
-            "3. Groups awaiting members: pending groups with arrival date, filled/total rows and "
-            "whether the invite was sent.\n"
-            "4. Anything RETURNED older than 24 hours (compare return state and updated_at from "
-            "get_registration on RETURNED tokens you know about) that the guest has not resubmitted.\n\n"
-            "Use the masked document numbers exactly as returned; never guess a full number. Do not "
-            "approve or return anything in this briefing."
+            "list_pending_registrations (walk every page with next_cursor), desk_minor_alerts, "
+            "list_groups with status=pending and then get_group for each pending group, and "
+            "list_pending_registrations with state=RETURNED. Then write the handover in this format:\n\n"
+            "1. Arrivals today: pending cards whose arrival is today, oldest first, with last_name, "
+            "first_name, nationality, nights and the 4-digit code.\n"
+            "2. Minors: every alert, with age_band and whether a legal representative's signature is "
+            "still needed before approval (needs_legal_representative).\n"
+            "3. Groups awaiting members: each pending group's group_name, arrival, filled of total rows, "
+            "attention_ids and duplicates from get_group, and whether invite_sent_at is set.\n"
+            "4. Returned and not resubmitted: RETURNED cards whose created_at is older than 24 hours, "
+            "with return_step (1 dates, 2 personal, 3 address); quote return_reason only if it is present.\n\n"
+            "Use the masked document numbers and the ref values exactly as returned; never guess a "
+            "full number or a token. Do not approve or return anything in this briefing."
         )
 
     @mcp.prompt(title="Authority export checklist")

@@ -103,8 +103,23 @@ def _paginate(rows: list[dict[str, Any]], limit: int, cursor: str | None) -> tup
 
 # ---------------------------------------------------------------- reads
 
-def list_pending(limit: int = 25, cursor: str | None = None) -> tuple[list[dict[str, Any]], str | None, int]:
-    return _paginate(app().repo.list_pending(), limit, cursor)
+QueueState = Literal["PENDING_REVIEW", "RETURNED", "DRAFT"]
+
+
+def list_pending(limit: int = 25, cursor: str | None = None,
+                 state: QueueState = "PENDING_REVIEW") -> tuple[list[dict[str, Any]], str | None, int]:
+    """The desk queue (PENDING_REVIEW, via repo.list_pending) or the other non-approved states,
+    oldest first. RETURNED rows are what the briefing checks for guests who never resubmitted."""
+    a = app()
+    if state == "PENDING_REVIEW":
+        rows = a.repo.list_pending()
+    else:
+        if state not in ("RETURNED", "DRAFT"):
+            raise Invalid({"state": "PENDING_REVIEW, RETURNED or DRAFT (use list_approved_registrations for APPROVED)"})
+        with a.db.get_conn() as conn:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT * FROM guest_registration WHERE state=? ORDER BY created_at ASC", (state,))]
+    return _paginate(rows, limit, cursor)
 
 
 def list_approved(arrival_from: str | None = None, arrival_to: str | None = None, group_id: str | None = None,

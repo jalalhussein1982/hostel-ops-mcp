@@ -82,9 +82,20 @@ async def test_prompts(client):
     assert names == {"morning_desk_briefing", "authority_export_checklist"}
     p = await client.get_prompt("morning_desk_briefing", {})
     text = p.messages[0].content.text
-    for tool in ("list_pending_registrations", "desk_minor_alerts", "list_groups"):
+    for tool in ("list_pending_registrations", "desk_minor_alerts", "list_groups", "get_group"):
         assert tool in text
     assert "RETURNED" in text and "24" in text
+    # the prompt may only name tools that exist and fields the cards actually carry
+    import re
+
+    from hostel_ops_mcp import models
+    from tests.conftest import SPEC_TOOL_ORDER
+
+    named_tools = set(re.findall(r"\b([a-z]+(?:_[a-z]+)+)\b", text))
+    card_fields = set(models.RegistrationCard.model_fields) | set(models.RegistrationPage.model_fields) | set(models.GroupCard.model_fields) | set(models.GroupDetail.model_fields) | set(models.MinorAlert.model_fields)
+    known = set(SPEC_TOOL_ORDER) | card_fields | {"status", "state", "updated_at"}
+    unknown = {w for w in named_tools if w not in known}
+    assert not unknown, unknown
     q = await client.get_prompt("authority_export_checklist", {"period": "2026-09"})
     text = q.messages[0].content.text
     assert "2026-09" in text and "export_authority_report" in text and "month_summary" in text
