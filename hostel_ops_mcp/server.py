@@ -76,14 +76,19 @@ async def cache_directives(ctx, call_next):
 
 
 def create_server(*, token_verifier: TokenVerifier | None = None, auth: AuthSettings | None = None,
-                  request_state_security: RequestStateSecurity | None = None) -> MCPServer:
+                  request_state_security: RequestStateSecurity | None = None,
+                  auth_required: bool | None = None) -> MCPServer:
     """Build a server with every tool, resource and prompt registered in spec order.
 
     Without ``token_verifier``/``auth`` the instance serves stdio and in-memory clients
-    with ``STDIO_SCOPES``; with them its Streamable HTTP app is an OAuth 2.1 resource server.
+    with ``STDIO_SCOPES``; with them its Streamable HTTP app is an OAuth 2.1 resource server
+    and ``auth_required`` defaults to True: a request without a verified token is refused by
+    the guards themselves, never mapped onto ``STDIO_SCOPES`` (defence in depth behind the
+    SDK's bearer middleware).
     """
     mcp = MCPServer("hostel-ops", instructions=INSTRUCTIONS, token_verifier=token_verifier, auth=auth,
                     request_state_security=request_state_security, middleware=[cache_directives])
+    mcp._hostel_auth_required = bool(token_verifier is not None if auth_required is None else auth_required)
     _register(mcp)
     return mcp
 
@@ -479,16 +484,19 @@ def _register(mcp: MCPServer) -> None:
     # ── resources ────────────────────────────────────────────────────────────────────────
 
 
-    def _require_resource(uri: str, *scopes: str) -> None:
-        caller = guards.current_caller()
+    def _require_resource(uri: str, *scopes: str, ctx: Context | None = None) -> None:
+        try:
+            caller = guards.current_caller(ctx)
+        except ToolError as e:
+            raise ResourceError(str(e))
         for sc in scopes:
             if sc not in caller.scopes:
                 raise ResourceError(f"missing scope {sc}; this token cannot read {uri}")
 
 
-    def _export_blob(fmt: str, export_id: str) -> bytes:
+    def _export_blob(fmt: str, export_id: str, ctx: Context) -> bytes:
         uri = f"export://{fmt}/{export_id}"
-        _require_resource(uri, "export", "pii:read")
+        _require_resource(uri, "export", "pii:read", ctx=ctx)
         data = ops.read_export(fmt, export_id)
         if data is None:
             raise ResourceNotFoundError(f"{uri} (expired or never existed; exports live EXPORT_TTL_MINUTES)")
@@ -496,15 +504,15 @@ def _register(mcp: MCPServer) -> None:
 
 
     @mcp.resource("export://xlsx/{export_id}", mime_type=ops.EXPORT_MIME["xlsx"], title="Authority export (XLSX)")
-    def export_xlsx(export_id: str) -> bytes:
+    def export_xlsx(export_id: str, ctx: Context) -> bytes:
         """Bytes of an XLSX export produced by export_authority_report. `export` + `pii:read`."""
-        return _export_blob("xlsx", export_id)
+        return _export_blob("xlsx", export_id, ctx)
 
 
     @mcp.resource("export://pdf/{export_id}", mime_type=ops.EXPORT_MIME["pdf"], title="Authority export (PDF)")
-    def export_pdf(export_id: str) -> bytes:
+    def export_pdf(export_id: str, ctx: Context) -> bytes:
         """Bytes of a PDF export produced by export_authority_report. `export` + `pii:read`."""
-        return _export_blob("pdf", export_id)
+        return _export_blob("pdf", export_id, ctx)
 
 
     @mcp.resource("hostel://policy/roles", mime_type="text/markdown", title="Scopes, tools and the field policy")
@@ -520,7 +528,7 @@ def _register(mcp: MCPServer) -> None:
     @mcp.resource("hostel://registration/{token}", mime_type="application/json", title="One registration")
     async def registration_resource(token: str, ctx: Context) -> str:
         """Same document get_registration returns, as a resource. `token` is a `ref` or a raw token. desk:read."""
-        _require_resource(f"hostel://registration/{token}", "desk:read")
+        _require_resource(f"hostel://registration/{token}", "desk:read", ctx=ctx)
         try:
             reg = await get_registration(ctx, token)   # the tool function, with its own guard and redaction
         except ToolError as e:
@@ -530,7 +538,7 @@ def _register(mcp: MCPServer) -> None:
     @mcp.resource("hostel://group/{slug}", mime_type="application/json", title="One group")
     async def group_resource(slug: str, ctx: Context) -> str:
         """Same document get_group returns, as a resource. groups:read."""
-        _require_resource(f"hostel://group/{slug}", "groups:read")
+        _require_resource(f"hostel://group/{slug}", "groups:read", ctx=ctx)
         try:
             g = await get_group(ctx, slug)
         except ToolError as e:
@@ -596,6 +604,29 @@ def request_state_security_from_env() -> RequestStateSecurity | None:
     return RequestStateSecurity(keys=keys, ttl=ttl)
 
 
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def check_http_mode(host: str, auth_configured: bool, insecure: bool) -> None:
+    """Refuse the footguns of unauthenticated HTTP unless --insecure-no-auth says so explicitly.
+
+    Without OAuth the HTTP transport authenticates nobody and every caller gets STDIO_SCOPES.
+    That is acceptable on loopback with read scopes; anything else must be asked for by name."""
+    if auth_configured or insecure:
+        return
+    problems = []
+    if host.strip("[]") not in LOOPBACK_HOSTS:
+        problems.append(f"--host {host} is not loopback")
+    privileged = sorted(guards.stdio_scopes() & guards.WRITE_OR_PII_SCOPES)
+    if privileged:
+        problems.append(f"STDIO_SCOPES grants {', '.join(privileged)}")
+    if problems:
+        raise SystemExit(
+            "refusing to serve unauthenticated HTTP: " + "; ".join(problems) + ". Set OAUTH_ISSUER_URL "
+            "(resource-server mode) or pass --insecure-no-auth if you really mean it."
+        )
+
+
 def server_from_env() -> MCPServer:
     """Resource-server mode when OAUTH_ISSUER_URL is set; plain server otherwise."""
     from .auth import JwtVerifier
@@ -620,9 +651,12 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
     ap.add_argument("--stateful", action="store_true", help="HTTP: keep per-session state (default: stateless)")
+    ap.add_argument("--insecure-no-auth", action="store_true",
+                    help="HTTP without OAuth on a non-loopback host or with write/pii STDIO_SCOPES (never in production)")
     args = ap.parse_args(argv)
     ops.app()  # bind the database early so a bad HOSTEL_DATABASE_PATH fails at start-up
     if args.http:
+        check_http_mode(args.host, bool(os.environ.get("OAUTH_ISSUER_URL", "").strip()), args.insecure_no_auth)
         server_from_env().run(transport="streamable-http", host=args.host, port=args.port,
                               stateless_http=not args.stateful)
     else:

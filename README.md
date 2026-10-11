@@ -56,7 +56,10 @@ RESOURCE_SERVER_URL=http://127.0.0.1:8000/mcp \
 
 Without Keycloak, `scripts/dev_token.py` mints an RS256 token with a local key pair and writes the
 JWKS to serve with `python -m http.server`; see [docs/auth.md](docs/auth.md). `--http` without
-`OAUTH_ISSUER_URL` serves unauthenticated HTTP with `STDIO_SCOPES` (local development only).
+`OAUTH_ISSUER_URL` serves unauthenticated HTTP with `STDIO_SCOPES`: the server refuses to start on
+a non-loopback host, or with any write/erase/pii scope in `STDIO_SCOPES`, unless you pass
+`--insecure-no-auth`. In OAuth mode a request without a verified token is refused by the guards
+themselves; `STDIO_SCOPES` is never consulted.
 
 ### Host configuration
 

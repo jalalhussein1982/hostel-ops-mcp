@@ -21,7 +21,8 @@ BASE = "http://127.0.0.1:8000"
 @pytest.fixture
 async def rs(app, monkeypatch):
     """An authenticated server instance plus its ASGI app with the lifespan running."""
-    monkeypatch.setenv("STDIO_SCOPES", "")  # nothing falls back to stdio scopes over HTTP
+    # Every stdio scope is set on purpose: in OAuth mode none of them may ever be used.
+    monkeypatch.setenv("STDIO_SCOPES", "desk:read,desk:write,groups:read,groups:write,export,pii:read,admin:read,admin:write,admin:erase")
     keys = Keys()
     verifier = JwtVerifier(jwks_url=JWKS_URL, issuer=ISS, audience=AUD, http=keys.http())
     server = create_server(

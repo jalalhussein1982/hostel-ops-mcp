@@ -68,9 +68,28 @@ def stdio_scopes() -> set[str]:
     return {s.strip() for s in raw.split(",") if s.strip()}
 
 
+UNAUTHENTICATED = "unauthenticated: this server requires a bearer token (OAuth 2.1 resource server mode)"
+
+WRITE_OR_PII_SCOPES = frozenset(s for s in SCOPES if s.endswith(":write") or s in ("admin:erase", "pii:read", "export"))
+
+
+def auth_required(ctx) -> bool:
+    """True when the server instance behind `ctx` was built for OAuth mode: no token, no access.
+
+    `create_server()` stamps `_hostel_auth_required` on the instance. Outside a request
+    (`ctx is None`, or a Context without a server) the answer is False, which only ever
+    applies to local in-process use."""
+    try:
+        return bool(getattr(ctx.mcp_server, "_hostel_auth_required", False)) if ctx is not None else False
+    except ValueError:  # Context outside a request
+        return False
+
+
 def current_caller(ctx=None) -> Caller:
     token = get_access_token()
     if token is None:
+        if auth_required(ctx):
+            raise ToolError(UNAUTHENTICATED)
         return Caller(scopes=frozenset(stdio_scopes()), actor="mcp:stdio", authenticated=False)
     who = token.subject or token.client_id
     return Caller(scopes=frozenset(token.scopes), actor=f"mcp:{who}", authenticated=True)
@@ -81,9 +100,13 @@ def current_scopes(ctx=None) -> set[str]:
 
 
 def require(ctx, tool: str, *scopes: str) -> Caller:
-    """Raise ``ToolError`` naming the first missing scope; return the caller otherwise."""
+    """Raise ``ToolError`` naming the first missing scope; return the caller otherwise.
+
+    Fail closed: a tool name missing from TOOL_SCOPES is a programming error, not a free pass."""
+    if tool not in TOOL_SCOPES:
+        raise ValueError(f"{tool!r} has no entry in guards.TOOL_SCOPES; every tool must be classified")
     caller = current_caller(ctx)
-    for s in scopes or TOOL_SCOPES.get(tool, ()):
+    for s in scopes or TOOL_SCOPES[tool]:
         if s not in caller.scopes:
             raise ToolError(f"missing scope {s}; this token cannot call {tool}")
     return caller
