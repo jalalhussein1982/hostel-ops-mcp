@@ -590,8 +590,13 @@ _EXPORT_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
 def export_dir() -> Path:
-    d = Path(os.environ.get("EXPORT_DIR") or ROOT / "exports")
-    d.mkdir(parents=True, exist_ok=True)
+    """EXPORT_DIR, or a per-user directory under the system temp dir. Created 0700; never inside the repo."""
+    d = Path(os.environ.get("EXPORT_DIR") or Path(tempfile.gettempdir()) / f"hostel-ops-exports-{os.getuid()}")
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        d.chmod(0o700)
+    except OSError:  # pragma: no cover - foreign filesystem
+        pass
     return d
 
 
@@ -604,9 +609,14 @@ def sweep_exports() -> int:
     cutoff = time.time() - export_ttl().total_seconds()
     n = 0
     for p in export_dir().iterdir():
-        if p.suffix.lstrip(".") in EXPORT_MIME and p.stat().st_mtime < cutoff:
-            p.unlink(missing_ok=True)
-            n += 1
+        if p.suffix.lstrip(".") not in EXPORT_MIME:
+            continue
+        try:
+            if p.stat().st_mtime < cutoff:
+                p.unlink()
+                n += 1
+        except FileNotFoundError:   # another worker swept it between listing and stat/unlink
+            continue
     return n
 
 
@@ -650,7 +660,9 @@ def export(tokens: list[str] | None, arrival_from: str | None, arrival_to: str |
     sweep_exports()
     export_id = uuid.uuid4().hex
     path = export_dir() / f"{export_id}.{fmt}"
-    path.write_bytes(data)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
     now = datetime.now(timezone.utc)
     sha = hashlib.sha256(data).hexdigest()
     periods = sorted({(r.get("arrival") or "")[:7] for r in selected})

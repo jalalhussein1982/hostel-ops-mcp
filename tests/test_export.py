@@ -153,3 +153,60 @@ async def test_export_and_edit_annotations(client):
     assert e.read_only_hint is False and e.destructive_hint is False
     d = tools["edit_approved_registration"]
     assert d.read_only_hint is False and d.destructive_hint is False and d.idempotent_hint is True
+
+
+# ---- finding 8: export files are private, swept at startup, and the sweep tolerates races -------
+
+@pytest.mark.anyio
+async def test_export_dir_and_files_are_private(client, planted, export_dir):
+    import stat
+
+    r = (await client.call_tool("export_authority_report",
+                                {"tokens": planted["tokens"]["APPROVED"][:1], "format": "xlsx"})).structured_content
+    assert stat.S_IMODE(export_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE((export_dir / f"{r['export_id']}.xlsx").stat().st_mode) == 0o600
+
+
+def test_default_export_dir_is_under_the_temp_dir_not_the_repo(monkeypatch):
+    import tempfile
+
+    from hostel_ops_mcp import ops
+
+    monkeypatch.delenv("EXPORT_DIR", raising=False)
+    d = ops.export_dir()
+    assert str(d).startswith(tempfile.gettempdir()) and not str(d).startswith(str(ops.ROOT))
+
+
+def test_sweep_tolerates_a_file_vanishing_between_listing_and_stat(export_dir, monkeypatch):
+    from pathlib import Path
+
+    from hostel_ops_mcp import ops
+
+    export_dir.mkdir(parents=True, exist_ok=True)
+    victim = export_dir / "00000000000000000000000000000001.xlsx"
+    victim.write_bytes(b"x")
+    real_stat = Path.stat
+
+    def flaky_stat(self, *a, **k):
+        if self.name == victim.name:
+            raise FileNotFoundError(self)
+        return real_stat(self, *a, **k)
+
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+    assert ops.sweep_exports() == 0            # no crash, nothing counted
+
+
+def test_server_startup_sweeps_stale_exports(export_dir, monkeypatch):
+    import os
+    import time
+
+    from hostel_ops_mcp import server
+
+    export_dir.mkdir(parents=True, exist_ok=True)
+    stale = export_dir / "00000000000000000000000000000002.pdf"
+    stale.write_bytes(b"%PDF-")
+    past = time.time() - 2 * 3600
+    os.utime(stale, (past, past))
+    monkeypatch.setattr(server.MCPServer, "run", lambda self, **kw: None)
+    server.main(["--stdio"])
+    assert not stale.exists()

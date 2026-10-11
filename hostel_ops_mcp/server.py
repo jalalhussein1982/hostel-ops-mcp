@@ -664,6 +664,7 @@ def main(argv: list[str] | None = None) -> None:
                     help="HTTP without OAuth on a non-loopback host or with write/pii STDIO_SCOPES (never in production)")
     args = ap.parse_args(argv)
     ops.app()  # bind the database early so a bad HOSTEL_DATABASE_PATH fails at start-up
+    ops.sweep_exports()  # drop exports a previous process left behind past their TTL
     if args.http:
         check_http_mode(args.host, bool(os.environ.get("OAUTH_ISSUER_URL", "").strip()), args.insecure_no_auth)
         server_from_env().run(transport="streamable-http", host=args.host, port=args.port,

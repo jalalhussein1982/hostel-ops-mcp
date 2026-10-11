@@ -196,6 +196,9 @@ evals/            hostel-ops.xml (10 read-only QA pairs, answers computed from t
 - **`scopes_supported`** in the RFC 9728 metadata lists `["mcp"]` (the SDK derives it from
   `required_scopes`); the full scope list lives in `hostel://policy/roles` and the realm.
 - **Email** is recorded, not sent, in synthetic mode; live mode uses the app's Gmail settings.
+- **Export files** live under `EXPORT_DIR` (default: `hostel-ops-exports-<uid>` in the system temp
+  directory, 0700; files 0600) for `EXPORT_TTL_MINUTES` (60) and are swept at start-up and on every
+  export or read. They contain document numbers; put `EXPORT_DIR` on an encrypted volume in production.
 
 ## Related servers in this portfolio
 
