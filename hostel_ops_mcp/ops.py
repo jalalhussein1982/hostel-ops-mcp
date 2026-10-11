@@ -270,18 +270,54 @@ def _check_transition(rec: dict[str, Any], action_name: str) -> None:
         raise InvalidState(f"registration {handles.ref_for(rec['token'])}", rec["state"], _allowed_actions(rec["state"]))
 
 
+import threading  # noqa: E402
+
+_approve_locks: dict[str, threading.Lock] = {}
+_approve_locks_guard = threading.Lock()
+
+
+def _approve_lock(token: str) -> threading.Lock:
+    with _approve_locks_guard:
+        return _approve_locks.setdefault(token, threading.Lock())
+
+
 def approve(token: str, actor: str) -> dict[str, Any]:
-    """PENDING_REVIEW -> APPROVED through the app's state machine; idempotent on APPROVED."""
+    """PENDING_REVIEW -> APPROVED through the app's state machine; idempotent on APPROVED.
+
+    Two callers of this process racing on one token are serialised by a per-token lock. An
+    approval that lands from another process (the desk) between our check and repo.approve
+    is detected afterwards: repo.approve is a no-op on a non-pending row, so if the row we
+    re-read was approved before we started, we report already_approved and audit nothing."""
     a = app()
     rec = get_registration(token)
     token, ref = rec["token"], handles.ref_for(rec["token"])
-    if rec["state"] == a.state.State.APPROVED.value:
-        return {"ref": ref, "token": token, "serial": rec["serial"], "approved_at": rec["approved_at"], "already_approved": True}
-    _check_transition(rec, "APPROVE")
-    a.repo.approve(token)
-    rec = a.repo.get_registration(token)
-    a.repo.audit(actor, "approve", period=(rec.get("arrival") or "")[:7] or None, detail=ref)
-    return {"ref": ref, "token": token, "serial": rec["serial"], "approved_at": rec["approved_at"], "already_approved": False}
+    with _approve_lock(token):
+        rec = a.repo.get_registration(token)
+        if rec["state"] == a.state.State.APPROVED.value:
+            return {"ref": ref, "token": token, "serial": rec["serial"], "approved_at": rec["approved_at"], "already_approved": True}
+        _check_transition(rec, "APPROVE")
+        started = a.repo._utcnow_iso()
+        a.repo.approve(token)
+        after = a.repo.get_registration(token)
+        # repo.approve is a no-op on a row that is no longer pending. If the row carries an
+        # approved_at from before we started, another process (the desk) approved it: report
+        # already_approved and audit nothing. Within the same second the two are
+        # indistinguishable (the app stamps whole seconds); _audit_claims keeps at least the
+        # audit from doubling when the other writer was this server.
+        ours = (after["state"] == a.state.State.APPROVED.value and after["approved_at"] is not None
+                and after["approved_at"] >= started and _audit_claims(a, ref) == 0)
+        if not ours:
+            return {"ref": ref, "token": token, "serial": after["serial"], "approved_at": after["approved_at"], "already_approved": True}
+        a.repo.audit(actor, "approve", period=(after.get("arrival") or "")[:7] or None, detail=ref)
+    return {"ref": ref, "token": token, "serial": after["serial"], "approved_at": after["approved_at"], "already_approved": False}
+
+
+def _audit_claims(a, ref: str) -> int:
+    """Approve audit rows this server already wrote for `ref` (cross-process duplicate guard)."""
+    with a.db.get_conn() as conn:
+        return int(conn.execute(
+            "SELECT COUNT(*) FROM admin_audit WHERE action='approve' AND detail=? AND actor LIKE 'mcp:%'", (ref,)
+        ).fetchone()[0])
 
 
 def return_registration(token: str, reason: str, step: int, actor: str) -> dict[str, Any]:
