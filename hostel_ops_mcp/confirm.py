@@ -46,8 +46,18 @@ class ConfirmOutcome:
 
 
 def host_supports_form_elicitation(ctx: Context) -> bool:
+    """Form elicitation is declared by `elicitation.form`, or by a bare `elicitation: {}`.
+
+    The 2025-06-18 revision had form mode only, declared as an empty object; `form` and `url`
+    sub-capabilities arrived in 2025-11-25. A client that declares only `url` cannot render our
+    boolean form and is refused."""
     caps = ctx.client_capabilities
-    return bool(caps is not None and caps.elicitation is not None and caps.elicitation.form is not None)
+    if caps is None or caps.elicitation is None:
+        return False
+    el = caps.elicitation
+    if el.form is not None:
+        return True
+    return el.url is None   # bare `elicitation: {}` -> legacy form-only client
 
 
 def confirm_or_request(ctx: Context, key: str, message: str, state: str,

@@ -121,3 +121,30 @@ async def test_pii_scope_in_the_token_unmasks(rs, planted):
     async with _sdk(asgi, tok) as c:
         reg = (await c.call_tool("get_registration", {"token": planted["tokens"]["APPROVED"][0]})).structured_content
     assert reg["passport_no"].startswith("X") and reg["dob"]
+
+
+@pytest.mark.anyio
+async def test_mrtr_erase_over_streamable_http(rs, app, planted):
+    """The whole confirmation round trip over the real HTTP transport, with the token's principal bound into the seal."""
+    from mcp.types import ElicitResult
+
+    from hostel_ops_mcp.handles import ref_for
+
+    keys, asgi = rs
+    tok = planted["tokens"]["APPROVED"][22]
+    seen = []
+
+    async def say_yes(context, params):
+        seen.append(params.message)
+        return ElicitResult(action="accept", content={"confirm": True})
+
+    http = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=asgi), base_url=BASE,
+                              headers={"Authorization": f"Bearer {keys.token(scope='mcp admin:erase', sub='carol')}"})
+    async with Client(streamable_http_client(f"{BASE}/mcp", http_client=http), raise_exceptions=True,
+                      elicitation_callback=say_yes) as c:
+        r = await c.call_tool("erase_registration", {"token": ref_for(tok)})
+    assert r.is_error is False and r.structured_content["result"]["deleted"] == 1
+    assert len(seen) == 1 and "This cannot be undone" in seen[0]
+    assert app.repo.get_registration(tok) is None
+    rows = [a for a in app.repo.audit_recent(10) if a["action"] == "delete"]
+    assert rows and rows[0]["actor"] == "mcp:carol"

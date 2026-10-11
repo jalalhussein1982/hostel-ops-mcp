@@ -155,3 +155,27 @@ async def test_destructive_annotations(client):
     tools = {t.name: t.annotations for t in (await client.list_tools()).tools}
     a = tools["erase_registration"]
     assert a.read_only_hint is False and a.destructive_hint is True and a.idempotent_hint is False
+
+
+@pytest.mark.anyio
+async def test_legacy_bare_elicitation_capability_counts_as_form(app, planted, monkeypatch):
+    """Finding 4: a 2025-06-18 client declares `elicitation: {}` (no form/url sub-keys); that is form-capable."""
+    from mcp.types import ClientCapabilities, ElicitationCapability, UrlElicitationCapability
+
+    from hostel_ops_mcp import confirm
+
+    class Ctx:
+        input_responses = None
+        request_state = None
+
+        def __init__(self, caps):
+            self.client_capabilities = caps
+
+    assert confirm.host_supports_form_elicitation(Ctx(ClientCapabilities(elicitation=ElicitationCapability()))) is True
+    assert confirm.host_supports_form_elicitation(Ctx(ClientCapabilities(elicitation=None))) is False
+    assert confirm.host_supports_form_elicitation(Ctx(None)) is False
+    url_only = ClientCapabilities(elicitation=ElicitationCapability(url=UrlElicitationCapability()))
+    assert confirm.host_supports_form_elicitation(Ctx(url_only)) is False
+    with pytest.raises(Exception) as exc:
+        confirm.confirm_or_request(Ctx(url_only), "confirm", "m", "s")
+    assert "cannot confirm" in str(exc.value)
