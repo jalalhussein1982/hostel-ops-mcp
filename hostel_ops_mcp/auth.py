@@ -16,6 +16,7 @@ import logging
 import time
 from typing import Any
 
+import anyio
 import httpx
 import jwt
 from mcp.server.auth.provider import AccessToken
@@ -23,6 +24,8 @@ from mcp.server.auth.provider import AccessToken
 log = logging.getLogger("hostel_ops_mcp.auth")
 
 DEFAULT_ALGORITHMS = ("RS256", "RS384", "RS512", "PS256", "ES256", "ES384")
+REFETCH_INTERVAL = 30.0          # seconds between JWKS fetches triggered by an unknown kid
+MAX_JWKS_BYTES = 64 * 1024       # a JWKS is a few KiB; anything larger is not one
 
 
 def parse_scope(value: Any) -> list[str]:
@@ -47,23 +50,48 @@ class JwtVerifier:
         self.cache_ttl = cache_ttl
         self.algorithms = list(algorithms)
         self._keys: dict[str, Any] = {}
-        self._fetched_at = 0.0
+        self._fetched_at = 0.0        # last successful fetch
+        self._attempted_at = 0.0      # last fetch attempt, success or not (throttles unknown-kid refetches)
+        self._lock = anyio.Lock()
 
-    async def _jwks(self, force: bool = False) -> dict[str, Any]:
-        if not force and self._keys and time.monotonic() - self._fetched_at < self.cache_ttl:
-            return self._keys
-        resp = await self.http.get(self.jwks_url)
-        resp.raise_for_status()
-        keys: dict[str, Any] = {}
-        for jwk in resp.json().get("keys", []):
-            kid = jwk.get("kid")
-            if kid and jwk.get("use", "sig") == "sig":
-                try:
-                    keys[kid] = jwt.PyJWK(jwk).key
-                except jwt.PyJWTError:
-                    log.warning("skipping unusable JWK kid=%s", kid)
-        self._keys, self._fetched_at = keys, time.monotonic()
-        return keys
+    async def _fetch(self) -> None:
+        """One JWKS fetch. Never raises: on any failure the cached keys stay as they were."""
+        self._attempted_at = time.monotonic()
+        try:
+            resp = await self.http.get(self.jwks_url)
+            resp.raise_for_status()
+            if len(resp.content) > MAX_JWKS_BYTES:
+                raise ValueError(f"JWKS body is {len(resp.content)} bytes; limit is {MAX_JWKS_BYTES}")
+            data = resp.json()
+            if not isinstance(data, dict) or not isinstance(data.get("keys"), list):
+                raise ValueError("JWKS is not an object with a `keys` array")
+            keys: dict[str, Any] = {}
+            for jwk in data["keys"]:
+                if not isinstance(jwk, dict):
+                    continue
+                kid = jwk.get("kid")
+                if isinstance(kid, str) and kid and jwk.get("use", "sig") == "sig":
+                    try:
+                        keys[kid] = jwt.PyJWK(jwk).key
+                    except Exception:  # noqa: BLE001 - one bad key must not take the ring down
+                        log.warning("skipping unusable JWK kid=%s", kid)
+            self._keys, self._fetched_at = keys, time.monotonic()
+        except Exception as e:  # noqa: BLE001 - a JWKS problem is a 401 for the caller, never a 500
+            log.warning("JWKS fetch from %s failed: %s: %s", self.jwks_url, type(e).__name__, e)
+
+    async def _key_for(self, kid: str) -> Any | None:
+        """The verification key for `kid`, fetching the JWKS when stale or when the kid is unknown,
+        at most once per REFETCH_INTERVAL for unknown kids. Serialised so concurrent cold starts
+        share one fetch."""
+        async with self._lock:
+            now = time.monotonic()
+            fresh = bool(self._keys) and now - self._fetched_at < self.cache_ttl
+            if fresh and kid in self._keys:
+                return self._keys[kid]
+            if now - self._attempted_at >= REFETCH_INTERVAL or not fresh and not self._keys:
+                if not fresh or kid not in self._keys:
+                    await self._fetch()
+            return self._keys.get(kid)
 
     async def verify_token(self, token: str) -> AccessToken | None:
         if not token:
@@ -73,14 +101,9 @@ class JwtVerifier:
         except jwt.PyJWTError:
             return None
         kid = header.get("kid")
-        try:
-            keys = await self._jwks()
-            key = keys.get(kid)
-            if key is None:
-                key = (await self._jwks(force=True)).get(kid)
-        except (httpx.HTTPError, ValueError) as e:
-            log.warning("JWKS fetch failed: %s", e)
+        if not isinstance(kid, str) or not kid:
             return None
+        key = await self._key_for(kid)
         if key is None:
             return None
         try:

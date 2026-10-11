@@ -105,9 +105,83 @@ def test_parse_scope_forms():
 
 
 @pytest.mark.anyio
-async def test_jwks_is_cached_and_refetched_once_on_unknown_kid(verifier, keys):
+async def test_jwks_is_cached_and_refetched_once_on_unknown_kid(verifier, keys, monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr("hostel_ops_mcp.auth.time.monotonic", lambda: now[0])
     await verifier.verify_token(keys.token())
     await verifier.verify_token(keys.token())
     assert keys.requests == 1
+    now[0] += 31                                # past the unknown-kid throttle window
     assert await verifier.verify_token(keys.token(_kid="new")) is None
     assert keys.requests == 2
+
+
+# ---- finding 7: JWKS fetching is bounded and never raises into the request -----------------
+
+@pytest.mark.anyio
+async def test_cold_cache_fetches_once_even_for_an_unknown_kid(keys):
+    v = JwtVerifier(jwks_url=JWKS_URL, issuer=ISS, audience=AUD, http=keys.http())
+    assert await v.verify_token(keys.token(_kid="unknown")) is None
+    assert keys.requests == 1          # the fetch that just happened is fresh; no second fetch
+
+
+@pytest.mark.anyio
+async def test_unknown_kid_refetch_is_throttled(keys, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr("hostel_ops_mcp.auth.time.monotonic", lambda: now[0])
+    v = JwtVerifier(jwks_url=JWKS_URL, issuer=ISS, audience=AUD, http=keys.http())
+    await v.verify_token(keys.token())                          # warm: 1 fetch
+    now[0] += 60
+    for _ in range(5):
+        assert await v.verify_token(keys.token(_kid="rotated")) is None
+    assert keys.requests == 2                                   # one refetch for the burst, not five
+    now[0] += 31
+    assert await v.verify_token(keys.token(_kid="rotated")) is None
+    assert keys.requests == 3                                   # allowed again after the 30 s window
+
+
+@pytest.mark.anyio
+async def test_non_object_jwks_and_oversized_body_yield_none(keys):
+    bodies = iter([httpx.Response(200, json=["not", "an", "object"]),
+                   httpx.Response(200, content=b"{" + b" " * (70 * 1024) + b"}")])
+    http = httpx.AsyncClient(transport=httpx.MockTransport(lambda req: next(bodies)))
+    v = JwtVerifier(jwks_url=JWKS_URL, issuer=ISS, audience=AUD, http=http)
+    assert await v.verify_token(keys.token()) is None
+    v2 = JwtVerifier(jwks_url=JWKS_URL, issuer=ISS, audience=AUD, http=http)
+    assert await v2.verify_token(keys.token()) is None
+
+
+@pytest.mark.anyio
+async def test_non_string_kid_header_is_rejected(verifier, keys):
+    import base64
+
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    def b64(b: bytes) -> str:
+        return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+    def handmade(header: dict) -> str:   # PyJWT refuses to encode a non-string kid, so sign by hand
+        payload = {"iss": ISS, "aud": AUD, "sub": "x", "scope": "mcp", "exp": int(time.time()) + 60}
+        signing = b64(json.dumps(header).encode()) + "." + b64(json.dumps(payload).encode())
+        sig = keys.private.sign(signing.encode(), padding.PKCS1v15(), hashes.SHA256())
+        return signing + "." + b64(sig)
+
+    assert await verifier.verify_token(handmade({"alg": "RS256", "typ": "JWT", "kid": 42})) is None
+    assert await verifier.verify_token(handmade({"alg": "RS256", "typ": "JWT"})) is None   # no kid at all
+
+
+@pytest.mark.anyio
+async def test_concurrent_cold_starts_share_one_fetch(keys):
+    import anyio
+
+    v = JwtVerifier(jwks_url=JWKS_URL, issuer=ISS, audience=AUD, http=keys.http())
+    results = []
+
+    async def one():
+        results.append(await v.verify_token(keys.token()))
+
+    async with anyio.create_task_group() as tg:
+        for _ in range(8):
+            tg.start_soon(one)
+    assert all(r is not None for r in results) and keys.requests == 1
