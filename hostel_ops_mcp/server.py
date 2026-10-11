@@ -457,19 +457,23 @@ def _register(mcp: MCPServer) -> None:
         verified backup row for the month, live rows present, live count equal to the
         backed-up count, and the encrypted snapshot on disk, decrypting and re-verifying.
         A failing guard is an error naming the reason; only a purge that is actually allowed
-        is ever put to the human, and the confirmation quotes the entry count and the
-        snapshot checksum. Accept deletes atomically (the app re-checks the count inside
-        the transaction); decline cancels."""
+        is ever put to the human, and the confirmation quotes the entry count, the number of
+        group requests the app removes with the month (open portals included) and the
+        snapshot checksum; all three are bound into the request state, so if any changes
+        between the question and the answer the human is asked again. Accept deletes
+        atomically (the app re-checks the count inside the transaction); decline cancels."""
         caller = guards.require(ctx, "purge_month")
         rep = ops.purge_guard(period)
         if not rep.ok:
-            raise ToolError(rep.message.format(period=period))
+            raise ToolError(rep.message())
+        groups_txt = (f"{rep.group_requests} group request{'s' if rep.group_requests != 1 else ''} for the month "
+                      f"(pending portals included)" if rep.group_requests else "no group requests")
         message = (
-            f"Purge {period}: delete {rep.entry_count} approved registrations whose verified encrypted "
-            f"snapshot {rep.snapshot_name} (sha256 {rep.snapshot_sha256[:12]}…) is on file? "
-            "The live rows and their signatures are removed; the snapshot remains. This cannot be undone."
+            f"Purge {period}: delete {rep.entry_count} approved registrations and {groups_txt}? "
+            f"The verified encrypted snapshot {rep.snapshot_name} (sha256 {rep.snapshot_sha256[:12]}…) stays on file; "
+            "the live rows, their signatures and the group requests are removed. This cannot be undone."
         )
-        outcome = confirm.confirm_or_request(ctx, "confirm", message, state=f"purge:{period}:{rep.entry_count}")
+        outcome = confirm.confirm_or_request(ctx, "confirm", message, state=ops.purge_state(period, rep))
         if outcome.status == "ask":
             return outcome.result
         if outcome.status == "declined":

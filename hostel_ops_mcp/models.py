@@ -216,7 +216,8 @@ class EraseResult(_Model):
 
 class PurgeResult(_Model):
     period: str
-    deleted: int
+    deleted: int = Field(description="APPROVED registrations removed (signatures cascade).")
+    group_requests_deleted: int = Field(default=0, description="group_request rows for the month removed by the app's delete_period.")
     snapshot_name: str
     snapshot_sha256: str
 

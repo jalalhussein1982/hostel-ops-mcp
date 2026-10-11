@@ -157,3 +157,35 @@ def test_guard_report_order_is_the_apps_delete_guard(app, backup):
     rep = ops.purge_guard(PERIOD)
     assert rep.ok and rep.reason is None and rep.entry_count == 15 and rep.snapshot_sha256 == backup["sha"]
     assert ops.purge_guard("2026-09").reason == "no_verified_backup"
+
+
+@pytest.mark.anyio
+async def test_question_states_group_requests_and_checksum_and_state_binds_them(client_with_scopes, app, backup):
+    """Finding 5: repo.delete_period also removes the month's group_request rows (open portals included)."""
+    # a pending group arriving in the month about to be purged
+    app.groups.create({"group_name": "August Walkers", "leader_last_name": "Vuso", "leader_first_name": "Pane",
+                       "arrival": "2026-08-20", "departure": "2026-08-22", "nights": 2,
+                       "receiver_email": "pane@example.invalid", "expected_members": 1}, app.auth.hash_password("x" * 8))
+    res = await _first_leg(client_with_scopes)
+    assert isinstance(res, InputRequiredResult)
+    msg = res.input_requests["confirm"].params.message
+    assert "15 approved registrations" in msg and "1 group request" in msg and backup["sha"][:12] in msg
+    rep = ops.purge_guard(PERIOD)
+    assert rep.group_requests == 1
+    state = ops.purge_state(PERIOD, rep)
+    assert backup["sha"][:12] in state and ":1:" in state and state.startswith(f"purge:{PERIOD}:15:")
+
+
+@pytest.mark.anyio
+async def test_guard_messages_survive_braces_in_db_text(client_with_scopes, app, backup):
+    """Finding 10: a snapshot name with `{` must not crash the message formatting."""
+    weird = "2026-08{v2}.db.enc"
+    (backup["dir"] / f"{PERIOD}.db.enc").rename(backup["dir"] / weird)
+    app.repo.backup_log_upsert(PERIOD, backup["count"], weird, "f" * 64, "2026-09-01T06:05:00Z", verified=1)
+    res = await _first_leg(client_with_scopes)
+    _refused(res, "verif")
+    assert weird in res.content[0].text
+    (backup["dir"] / weird).unlink()
+    res = await _first_leg(client_with_scopes)
+    _refused(res, "snapshot file")
+    assert weird in res.content[0].text

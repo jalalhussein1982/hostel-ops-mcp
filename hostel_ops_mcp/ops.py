@@ -412,15 +412,28 @@ class GuardReport:
     snapshot_name: str | None = None
     live_count: int = 0
     detail: str = ""
+    group_requests: int = 0        # group_request rows delete_period removes with the month (open portals included)
+    period: str = ""
 
-    @property
     def message(self) -> str:
+        """The refusal, formatted exactly once (DB-supplied text such as a snapshot name is data, not a template)."""
         if self.ok:
             return "ok"
+        check, _, detail = self.detail.partition(":")
         return GUARD_MESSAGES[self.reason].format(
-            period="{period}", live=self.live_count, entry_count=self.entry_count,
-            snapshot=self.snapshot_name, check=self.detail.partition(":")[0], detail=self.detail.partition(":")[2].strip(),
+            period=self.period, live=self.live_count, entry_count=self.entry_count,
+            snapshot=self.snapshot_name, check=check, detail=detail.strip(),
         )
+
+
+def count_group_requests(period: str) -> int:
+    with app().db.get_conn() as conn:
+        return int(conn.execute("SELECT COUNT(*) FROM group_request WHERE substr(arrival,1,7)=?", (period,)).fetchone()[0])
+
+
+def purge_state(period: str, rep: GuardReport) -> str:
+    """Plaintext request_state for purge_month: binds the counts and the checksum the human was shown."""
+    return f"purge:{period}:{rep.entry_count}:{rep.group_requests}:{(rep.snapshot_sha256 or '')[:12]}"
 
 
 def backup_key() -> str:
@@ -436,17 +449,19 @@ def purge_guard(period: str) -> GuardReport:
     """
     a = app()
     if not PERIOD_RE.match(period or ""):
-        return GuardReport(False, "bad_period", 0)
+        return GuardReport(False, "bad_period", 0, period=period)
     key = backup_key()
     if not key:
-        return GuardReport(False, "backup_not_configured", 0)
+        return GuardReport(False, "backup_not_configured", 0, period=period)
     row = a.repo.backup_log_get(period)
     if row is None or not row["verified"]:
-        return GuardReport(False, "no_verified_backup", 0)
+        return GuardReport(False, "no_verified_backup", 0, period=period)
     live = a.repo.count_approved_for_period(period)
-    rep = GuardReport(True, None, row["entry_count"], row["snapshot_sha256"], row["snapshot_name"], live)
+    rep = GuardReport(True, None, row["entry_count"], row["snapshot_sha256"], row["snapshot_name"], live,
+                      group_requests=count_group_requests(period), period=period)
     if live == 0:
-        return GuardReport(False, "nothing_to_purge", row["entry_count"], row["snapshot_sha256"], row["snapshot_name"], live)
+        rep.ok, rep.reason = False, "nothing_to_purge"
+        return rep
     if live != row["entry_count"]:
         rep.ok, rep.reason = False, "count_mismatch"
         return rep
@@ -478,12 +493,14 @@ class PurgeAborted(Exception):
 def purge(period: str, expected_count: int, actor: str) -> dict[str, Any]:
     a = app()
     row = a.repo.backup_log_get(period)
+    groups_before = count_group_requests(period)
     try:
         n = a.repo.delete_period(period, expected_count)
     except a.repo.CountChanged as e:
         raise PurgeAborted(f"the approved count for {period} changed while confirming ({e}); nothing was deleted") from e
     a.repo.audit(actor, "delete", period, f"{n} entries purged, snapshot {row['snapshot_name']}")
-    return {"period": period, "deleted": n, "snapshot_name": row["snapshot_name"], "snapshot_sha256": row["snapshot_sha256"]}
+    return {"period": period, "deleted": n, "group_requests_deleted": groups_before,
+            "snapshot_name": row["snapshot_name"], "snapshot_sha256": row["snapshot_sha256"]}
 
 
 # ---------------------------------------------------------------- admin edit (APPROVED only)
