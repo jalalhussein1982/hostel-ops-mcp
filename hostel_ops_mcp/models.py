@@ -19,7 +19,8 @@ class _Model(BaseModel):
 class RegistrationCard(_Model):
     """What the desk list shows for one registration. Document numbers are masked without pii:read."""
 
-    token: str = Field(description="Opaque registration id; the argument every other tool takes.")
+    ref: str = Field(description="Opaque handle for this registration; pass it as the `token` argument of any tool.")
+    token: str | None = Field(default=None, description="The raw registration token (opens the guest wizard); pii:read only.")
     serial: str | None = Field(default=None, description="YYYY-MM-DD-NNNN, assigned at approval.")
     state: Literal["DRAFT", "PENDING_REVIEW", "RETURNED", "APPROVED"]
     arrival: str | None = None
@@ -41,8 +42,9 @@ class RegistrationCard(_Model):
     group_id: str | None = None
     is_group_leader: bool = False
     under18: bool = Field(default=False, description="Under 18 on the arrival date (desk awareness flag).")
-    return_reason: str | None = None
+    return_reason: str | None = Field(default=None, description="Free text typed by the desk; pii:read only.")
     return_step: int | None = None
+    code: str | None = Field(default=None, description="4-digit desk matching code shown on the queue.")
 
 
 class SignatureInfo(_Model):
@@ -58,7 +60,6 @@ class SignatureInfo(_Model):
 class Registration(RegistrationCard):
     """Full record as the scope allows, plus signature provenance when one exists."""
 
-    code: str | None = None
     approved_at: str | None = None
     updated_at: str | None = None
     addr_structured: int | None = None
@@ -76,7 +77,8 @@ class RegistrationPage(_Model):
 
 
 class MinorAlert(_Model):
-    token: str
+    ref: str
+    token: str | None = None
     serial: str | None = None
     state: str
     first_name: str | None = None
@@ -161,14 +163,16 @@ class AuditRow(_Model):
 
 
 class ApprovalResult(_Model):
-    token: str
+    ref: str
+    token: str | None = Field(default=None, description="pii:read only.")
     serial: str | None
     approved_at: str | None
     already_approved: bool = Field(description="True when the row was APPROVED before this call; no second serial, no second audit row.")
 
 
 class ReturnResult(_Model):
-    token: str
+    ref: str
+    token: str | None = Field(default=None, description="pii:read only.")
     state: Literal["RETURNED"]
     return_step: int
     return_reason: str
@@ -188,7 +192,7 @@ class ExportResult(_Model):
     resource_uri: str = Field(description="Read this resource to get the bytes.")
     format: Literal["xlsx", "pdf"]
     rows: int
-    skipped: list[str] = Field(description="Tokens that were not APPROVED (or unknown) and were left out.")
+    skipped: list[str] = Field(description="Entries (as the caller passed them) that were not APPROVED or unknown and were left out.")
     skipped_detail: list[str] = Field(default_factory=list, description="`token: STATE` for each skipped token.")
     sha256: str
     generated_at: str
@@ -196,14 +200,16 @@ class ExportResult(_Model):
 
 
 class EditResult(_Model):
-    token: str
+    ref: str
+    token: str | None = Field(default=None, description="pii:read only.")
     changed: list[str]
     old_serial: str | None
     serial: str | None
 
 
 class EraseResult(_Model):
-    token: str
+    ref: str
+    token: str | None = Field(default=None, description="pii:read only.")
     deleted: int
     removed_group: str | None = Field(default=None, description="Slug of a group removed because this was its last member.")
 

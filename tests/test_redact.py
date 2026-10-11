@@ -79,10 +79,11 @@ def test_group_request_policy(app):
 
 
 def test_apply_never_raises_on_missing_or_unknown_keys():
-    assert redact.apply({"token": "x"}, "guest_registration", NONE) == {"token": "x"}
+    assert redact.apply({"token": "x"}, "guest_registration", NONE) == {"ref": redact.ref_for("x")}
+    assert redact.apply({"token": "x"}, "guest_registration", PII) == {"ref": redact.ref_for("x"), "token": "x"}
     assert redact.apply({"passport_no": None, "dob": None}, "guest_registration", NONE) == {"passport_no": None, "age_band": None}
     # an unclassified key is dropped, never passed through by accident
-    assert redact.apply({"brand_new_column": 1, "token": "t"}, "guest_registration", PII) == {"token": "t"}
+    assert redact.apply({"brand_new_column": 1, "state": "DRAFT"}, "guest_registration", PII) == {"state": "DRAFT"}
 
 
 @pytest.mark.parametrize("dob,band", [("2015-01-01", "<15"), ("2010-01-01", "15-17"), ("1990-05-05", "18+")])

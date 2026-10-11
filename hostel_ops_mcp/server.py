@@ -39,7 +39,7 @@ from mcp.server.mcpserver.exceptions import ResourceError, ResourceNotFoundError
 from mcp.types import InputRequiredResult, ToolAnnotations
 from pydantic import BaseModel, Field
 
-from . import confirm, guards, ops, policy, redact
+from . import confirm, guards, handles, ops, policy, redact
 from .models import (
     ApprovalResult, AuditRow, Cancelled, EditResult, EraseResult, ExportResult, GroupCard, GroupDetail, GroupLink, GroupMemberRow,
     MinorAlert, MonthRow, PurgeResult, Registration, RegistrationCard, RegistrationPage, ReturnResult, SignatureInfo,
@@ -93,6 +93,12 @@ def _register(mcp: MCPServer) -> None:
         return ToolAnnotations(title=title, read_only_hint=True, destructive_hint=False,
                                idempotent_hint=True, open_world_hint=False)
 
+
+    def _strip_token(d: dict[str, Any], scopes: set[str]) -> dict[str, Any]:
+        """Write results: the raw token only for pii:read holders; `ref` always."""
+        if redact.PII_SCOPE not in scopes:
+            d = {**d, "token": None}
+        return d
 
     def _card(rec: dict[str, Any], scopes: set[str]) -> RegistrationCard:
         out = redact.apply(rec, "guest_registration", scopes)
@@ -150,7 +156,7 @@ def _register(mcp: MCPServer) -> None:
     @mcp.tool(annotations=_read("One registration"))
     async def get_registration(
         ctx: Context,
-        token: Annotated[str, Field(description="Registration token from a list tool.")],
+        token: Annotated[str, Field(description="A registration `ref` (from any list) or a raw token.")],
         include_signature: Annotated[bool, Field(description="Also return the signature PNG (pii:read only).")] = False,
     ) -> Registration:
         """One registration in any state, with the fields the caller's scopes allow.
@@ -167,9 +173,10 @@ def _register(mcp: MCPServer) -> None:
         out = redact.apply(rec, "guest_registration", scopes)
         out["under18"] = ops.is_under_18(rec)
         out["is_group_leader"] = bool(rec.get("is_group_leader"))
-        sig = ops.get_signature(token)
+        sig = ops.get_signature(rec["token"])
         if sig is not None:
             s = redact.apply(sig, "guest_signature", scopes)
+            s.pop("ref", None)
             png = s.pop("signature_png", None)
             if include_signature and png is not None:
                 s["signature_png_base64"] = base64.b64encode(png).decode("ascii")
@@ -276,7 +283,7 @@ def _register(mcp: MCPServer) -> None:
     @mcp.tool(annotations=_write("Approve registration", idempotent=True))
     async def approve_registration(
         ctx: Context,
-        token: Annotated[str, Field(description="A PENDING_REVIEW token from list_pending_registrations.")],
+        token: Annotated[str, Field(description="A PENDING_REVIEW registration: its `ref` from list_pending_registrations, or the raw token.")],
     ) -> ApprovalResult:
         """Approve a pending registration: the app assigns the per-arrival serial and stores
         the address in capitals. Only PENDING_REVIEW rows can be approved; the error names
@@ -284,7 +291,7 @@ def _register(mcp: MCPServer) -> None:
         returns the same result with already_approved=true, so retries are safe. Audited."""
         caller = guards.require(ctx, "approve_registration")
         try:
-            return ApprovalResult.model_validate(ops.approve(token, caller.actor))
+            return ApprovalResult.model_validate(_strip_token(ops.approve(token, caller.actor), set(caller.scopes)))
         except (ops.NotFound, ops.InvalidState) as e:
             raise _as_tool_error(e)
 
@@ -292,7 +299,7 @@ def _register(mcp: MCPServer) -> None:
     @mcp.tool(annotations=_write("Return registration", idempotent=False))
     async def return_registration(
         ctx: Context,
-        token: Annotated[str, Field(description="A PENDING_REVIEW token.")],
+        token: Annotated[str, Field(description="A PENDING_REVIEW registration (`ref` or raw token).")],
         reason: Annotated[str, Field(min_length=1, max_length=500, description="Shown to the guest.")],
         step: Annotated[int, Field(ge=1, le=3, description="Wizard page to reopen: 1 dates, 2 personal, 3 address.")],
     ) -> ReturnResult:
@@ -300,7 +307,7 @@ def _register(mcp: MCPServer) -> None:
         page, as the desk's Return button does. PENDING_REVIEW -> RETURNED. Audited."""
         caller = guards.require(ctx, "return_registration")
         try:
-            return ReturnResult.model_validate(ops.return_registration(token, reason, step, caller.actor))
+            return ReturnResult.model_validate(_strip_token(ops.return_registration(token, reason, step, caller.actor), set(caller.scopes)))
         except (ops.NotFound, ops.InvalidState, ops.Invalid) as e:
             raise _as_tool_error(e)
 
@@ -354,7 +361,7 @@ def _register(mcp: MCPServer) -> None:
                                           idempotent_hint=False, open_world_hint=False))
     async def export_authority_report(
         ctx: Context,
-        tokens: Annotated[list[str] | None, Field(description="Explicit registrations; non-APPROVED ones are skipped.")] = None,
+        tokens: Annotated[list[str] | None, Field(description="Explicit registrations (`ref`s or raw tokens); non-APPROVED ones are skipped.")] = None,
         arrival_from: Annotated[str | None, Field(description="Or an arrival window: ISO date, inclusive.")] = None,
         arrival_to: Annotated[str | None, Field(description="ISO date, inclusive.")] = None,
         format: Annotated[Literal["xlsx", "pdf"], Field(description="File format.")] = "xlsx",
@@ -376,7 +383,7 @@ def _register(mcp: MCPServer) -> None:
                                           destructive_hint=False, idempotent_hint=True, open_world_hint=False))
     async def edit_approved_registration(
         ctx: Context,
-        token: Annotated[str, Field(description="An APPROVED token.")],
+        token: Annotated[str, Field(description="An APPROVED registration (`ref` or raw token).")],
         fields: Annotated[dict[str, str | int | None], Field(
             description="Wizard fields to change: arrival, departure, purpose_of_stay, last_name, first_name, dob, "
                         "passport_no, nationality (alpha-3), visa_no, car_reg, addr_line, addr_postcode, addr_city, "
@@ -404,7 +411,7 @@ def _register(mcp: MCPServer) -> None:
     @mcp.tool(annotations=_destructive("Erase registration"))
     async def erase_registration(
         ctx: Context,
-        token: Annotated[str, Field(description="Registration token to erase.")],
+        token: Annotated[str, Field(description="The registration to erase (`ref` or raw token).")],
     ) -> EraseResult | Cancelled | InputRequiredResult:
         """Erase one registration after the human confirms.
 
@@ -419,7 +426,7 @@ def _register(mcp: MCPServer) -> None:
             rec = ops.get_registration(token)
         except ops.NotFound as e:
             raise _not_found(e)
-        who = rec.get("serial") or token
+        who = rec.get("serial") or handles.ref_for(rec["token"])
         message = (
             f"Erase registration {who} (arrival {rec.get('arrival') or 'not set'}, state {rec['state']})? "
             "Legal basis is Act 326/1999; erasure is limited to records no longer required. "
@@ -431,7 +438,7 @@ def _register(mcp: MCPServer) -> None:
         if outcome.status == "declined":
             return Cancelled(reason="declined" if outcome.action == "decline" else "cancelled",
                              message=f"Registration {who} was not erased.")
-        return EraseResult.model_validate(ops.erase(token, caller.actor))
+        return EraseResult.model_validate(_strip_token(ops.erase(token, caller.actor), set(caller.scopes)))
 
 
     @mcp.tool(annotations=_destructive("Purge month"))
@@ -512,7 +519,7 @@ def _register(mcp: MCPServer) -> None:
 
     @mcp.resource("hostel://registration/{token}", mime_type="application/json", title="One registration")
     async def registration_resource(token: str, ctx: Context) -> str:
-        """Same document get_registration returns, as a resource. desk:read."""
+        """Same document get_registration returns, as a resource. `token` is a `ref` or a raw token. desk:read."""
         _require_resource(f"hostel://registration/{token}", "desk:read")
         try:
             reg = await get_registration(ctx, token)   # the tool function, with its own guard and redaction

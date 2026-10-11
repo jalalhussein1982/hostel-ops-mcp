@@ -6,6 +6,8 @@ import pytest
 from mcp.shared.exceptions import MCPError
 from mcp.types import ElicitRequest, ElicitResult, InputRequiredResult
 
+from hostel_ops_mcp.handles import ref_for
+
 ADMIN = {"admin:erase", "admin:read", "desk:read"}
 
 
@@ -50,10 +52,11 @@ async def test_accept_with_confirm_true_deletes_exactly_once_and_audits(client_w
             request_state=first.request_state, allow_input_required=True,
         )
     assert not isinstance(done, InputRequiredResult) and done.is_error is False
-    assert _out(done) == {"token": token, "deleted": 1, "removed_group": None}
+    # ADMIN has no pii:read, so the raw token is withheld even from the result of the erase itself
+    assert _out(done) == {"ref": ref_for(token), "token": None, "deleted": 1, "removed_group": None}
     assert app.repo.get_registration(token) is None and app.repo.get_signature(token) is None
     rows = _deletes(app)
-    assert len(rows) == 1 and token in rows[0]["detail"]
+    assert len(rows) == 1 and ref_for(token) in rows[0]["detail"] and token not in rows[0]["detail"]
 
 
 @pytest.mark.anyio

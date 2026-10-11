@@ -175,6 +175,13 @@ evals/            hostel-ops.xml (10 read-only QA pairs, answers computed from t
 
 ## Limitations
 
+- **Registration tokens are bearer credentials.** In the app, `GET /w/{token}/{step}` needs no
+  login and rehydrates the whole form for a RETURNED record. This server therefore never returns
+  a raw token to a caller without `pii:read`: every registration carries an opaque `ref`
+  (HMAC-SHA256 of the token under `HANDLE_KEY`, 16 hex chars) which every tool accepts in place
+  of the token, and audit rows store refs. A caller with `pii:read` can see raw tokens and hence
+  the guest wizard; that is the same trust the app places in the desk. Set `HANDLE_KEY` per
+  deployment; it needs to be stable, not secret (the HMAC cannot be inverted to a 192-bit token).
 - **SSE wake.** `app.events.notify()` is in-process; an approval made through MCP does not wake a
   guest's waiting screen. The guest page falls back to `/status/{token}` polling, which the app
   already does.

@@ -15,7 +15,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
-from . import _app
+from . import _app, handles
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB = ROOT / "fixtures" / "synthetic.db"
@@ -120,15 +120,24 @@ def list_approved(arrival_from: str | None = None, arrival_to: str | None = None
     return _paginate(rows, limit, cursor)
 
 
+def resolve_token(value: str) -> str:
+    """A tool's `token` argument may be a raw token or a `ref`; return the raw token."""
+    try:
+        return handles.resolve(value)
+    except handles.Unknown:
+        raise NotFound("registration", value, "list_pending_registrations or list_approved_registrations")
+
+
 def get_registration(token: str) -> dict[str, Any]:
+    token = resolve_token(token)
     rec = app().repo.get_registration(token)
-    if rec is None:
+    if rec is None:  # pragma: no cover - resolve_token has just seen it
         raise NotFound("registration", token, "list_pending_registrations or list_approved_registrations")
     return rec
 
 
 def get_signature(token: str) -> dict[str, Any] | None:
-    return app().repo.get_signature(token)
+    return app().repo.get_signature(resolve_token(token))
 
 
 def minor_alerts() -> list[dict[str, Any]]:
@@ -169,12 +178,12 @@ def _dupe_key(row: dict[str, Any]) -> tuple[str, str, str] | None:
 
 
 def duplicate_tokens(members: list[dict[str, Any]]) -> list[list[str]]:
-    """Injected members sharing (first, last, dob) — same rule as the app's panel check, keyed by token."""
+    """Injected members sharing (first, last, dob) — same rule as the app's panel check, keyed by `ref`."""
     buckets: dict[tuple[str, str, str], list[str]] = {}
     for m in members:
         key = _dupe_key(m)
         if key is not None:
-            buckets.setdefault(key, []).append(m["token"])
+            buckets.setdefault(key, []).append(handles.ref_for(m["token"]))
     return sorted([sorted(v) for v in buckets.values() if len(v) >= 2])
 
 
@@ -243,20 +252,21 @@ def _check_transition(rec: dict[str, Any], action_name: str) -> None:
     try:
         st.next_state(st.State(rec["state"]), st.Action[action_name])
     except st.InvalidTransition:
-        raise InvalidState(f"registration {rec['token']}", rec["state"], _allowed_actions(rec["state"]))
+        raise InvalidState(f"registration {handles.ref_for(rec['token'])}", rec["state"], _allowed_actions(rec["state"]))
 
 
 def approve(token: str, actor: str) -> dict[str, Any]:
     """PENDING_REVIEW -> APPROVED through the app's state machine; idempotent on APPROVED."""
     a = app()
     rec = get_registration(token)
+    token, ref = rec["token"], handles.ref_for(rec["token"])
     if rec["state"] == a.state.State.APPROVED.value:
-        return {"token": token, "serial": rec["serial"], "approved_at": rec["approved_at"], "already_approved": True}
+        return {"ref": ref, "token": token, "serial": rec["serial"], "approved_at": rec["approved_at"], "already_approved": True}
     _check_transition(rec, "APPROVE")
     a.repo.approve(token)
     rec = a.repo.get_registration(token)
-    a.repo.audit(actor, "approve", period=(rec.get("arrival") or "")[:7] or None, detail=token)
-    return {"token": token, "serial": rec["serial"], "approved_at": rec["approved_at"], "already_approved": False}
+    a.repo.audit(actor, "approve", period=(rec.get("arrival") or "")[:7] or None, detail=ref)
+    return {"ref": ref, "token": token, "serial": rec["serial"], "approved_at": rec["approved_at"], "already_approved": False}
 
 
 def return_registration(token: str, reason: str, step: int, actor: str) -> dict[str, Any]:
@@ -267,10 +277,11 @@ def return_registration(token: str, reason: str, step: int, actor: str) -> dict[
     if step not in (1, 2, 3):
         raise Invalid({"step": "must be 1 (dates), 2 (personal) or 3 (address)"})
     rec = get_registration(token)
+    token, ref = rec["token"], handles.ref_for(rec["token"])
     _check_transition(rec, "RETURN")
     a.repo.set_returned(token, reason=reason, step=step)
-    a.repo.audit(actor, "return", period=(rec.get("arrival") or "")[:7] or None, detail=f"{token} step={step}")
-    return {"token": token, "state": "RETURNED", "return_step": step, "return_reason": reason}
+    a.repo.audit(actor, "return", period=(rec.get("arrival") or "")[:7] or None, detail=f"{ref} step={step}")
+    return {"ref": ref, "token": token, "state": "RETURNED", "return_step": step, "return_reason": reason}
 
 
 # --- group invites -------------------------------------------------------------------
@@ -364,11 +375,12 @@ def erase(token: str, actor: str) -> dict[str, Any]:
     group, the group request goes too, as the desk's delete does. Audited as `delete`."""
     a = app()
     rec = get_registration(token)
+    token, ref = rec["token"], handles.ref_for(rec["token"])
     result = a.groups.delete_member(token)
     a.repo.audit(actor, "delete", period=(rec.get("arrival") or "")[:7] or None,
-                 detail=f"registration {token} serial={rec.get('serial')} erased"
+                 detail=f"registration {ref} serial={rec.get('serial')} erased"
                         + (f"; group {result['removed_group']} removed" if result["removed_group"] else ""))
-    return {"token": token, "deleted": result["deleted"], "removed_group": result["removed_group"]}
+    return {"ref": ref, "token": token, "deleted": result["deleted"], "removed_group": result["removed_group"]}
 
 
 # ---------------------------------------------------------------- month purge guard
@@ -509,8 +521,9 @@ def edit_approved(token: str, fields: dict[str, Any], actor: str) -> dict[str, A
     if not fields:
         raise Invalid({"fields": "nothing to change"})
     rec = get_registration(token)
+    token, ref = rec["token"], handles.ref_for(rec["token"])
     if rec["state"] != a.state.State.APPROVED.value:
-        raise InvalidState(f"registration {token}", rec["state"], ["only APPROVED records can be edited"])
+        raise InvalidState(f"registration {ref}", rec["state"], ["only APPROVED records can be edited"])
     form = record_to_form(rec)
     form.update({k: ("" if v is None else str(v)) for k, v in fields.items()})
     res = a.validation.validate_data_fields(form)
@@ -526,8 +539,8 @@ def edit_approved(token: str, fields: dict[str, Any], actor: str) -> dict[str, A
     detail = "fields: " + (", ".join(info["changed"]) or "none")
     if info["serial"] != info["old_serial"]:
         detail += f"; serial {info['old_serial']} -> {info['serial']}"
-    a.repo.audit(actor, "edit", period=res.cleaned["arrival"][:7], detail=detail)
-    return {"token": token, **info}
+    a.repo.audit(actor, "edit", period=res.cleaned["arrival"][:7], detail=f"{ref} {detail}")
+    return {"ref": ref, "token": token, **info}
 
 
 # ---------------------------------------------------------------- authority export
@@ -579,7 +592,10 @@ def export(tokens: list[str] | None, arrival_from: str | None, arrival_to: str |
     approved = a.state.State.APPROVED.value
     if tokens:
         for t in dict.fromkeys(tokens):
-            rec = a.repo.get_registration(t)
+            try:
+                rec = a.repo.get_registration(handles.resolve(t))
+            except handles.Unknown:
+                rec = None
             if rec is None:
                 skipped.append(t)
                 skipped_detail.append(f"{t}: unknown token")

@@ -21,7 +21,8 @@ async def test_approve_pending_assigns_a_serial_and_audits(client, app, planted)
     rec = app.repo.get_registration(token)
     assert rec["state"] == "APPROVED" and rec["serial"] == r["serial"] and rec["approved_at"] == r["approved_at"]
     rows = _audit(app, "approve")
-    assert len(rows) == 1 and rows[0]["detail"] == token and rows[0]["actor"] == "mcp:stdio"
+    from hostel_ops_mcp.handles import ref_for
+    assert len(rows) == 1 and rows[0]["detail"] == ref_for(token) and rows[0]["actor"] == "mcp:stdio"
 
 
 @pytest.mark.anyio
@@ -97,7 +98,8 @@ async def test_desk_write_alone_can_approve_and_sees_no_pii(client_with_scopes, 
     async with client_with_scopes({"desk:write"}) as c:
         r = await c.call_tool("approve_registration", {"token": token})
         assert r.is_error is False
-        assert set(r.structured_content) == {"token", "serial", "approved_at", "already_approved"}
+        assert set(r.structured_content) == {"ref", "token", "serial", "approved_at", "already_approved"}
+        assert r.structured_content["token"] is None   # the raw token opens the guest wizard; desk:write alone does not get it
         denied = await c.call_tool("get_registration", {"token": token})
         assert denied.is_error and "desk:read" in denied.content[0].text
 

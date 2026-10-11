@@ -5,7 +5,8 @@ tables that hold guest or leader data. ``apply`` is fail-closed: a column that i
 in the table is dropped, and ``classify_all_columns`` lets a test fail the build when
 the vendored app adds a column nobody has classified yet.
 
-Without ``pii:read`` a caller sees names, nationality, stay dates, state and serial;
+Without ``pii:read`` a caller sees names, nationality, stay dates, state, serial and an opaque
+``ref`` in place of the registration token (a bearer credential for the guest wizard);
 document numbers are masked to their last two characters, the date of birth becomes an
 age band, the address shrinks to its country, and signatures, signer names, contact
 details and drafts are absent.
@@ -18,6 +19,8 @@ from datetime import date
 from enum import Enum
 from typing import Any
 
+from .handles import ref_for  # noqa: F401  (re-exported for callers of the policy)
+
 PII_SCOPE = "pii:read"
 TABLES = ("guest_registration", "guest_signature", "group_request", "group_member")
 
@@ -29,13 +32,14 @@ class Treatment(Enum):
     COUNTRY_ONLY = "country_only"  # the address field that survives without pii:read
     PII_ONLY = "pii_only"          # present only with pii:read
     DROP = "drop"                  # never returned (secrets, hashes, raw drafts)
+    HANDLE = "handle"              # registration token: `ref` always, the token itself only with pii:read
 
 
-P, M, A, C, PII, D = (Treatment.PASS, Treatment.MASK_DOC, Treatment.AGE_BAND,
-                      Treatment.COUNTRY_ONLY, Treatment.PII_ONLY, Treatment.DROP)
+P, M, A, C, PII, D, H = (Treatment.PASS, Treatment.MASK_DOC, Treatment.AGE_BAND,
+                         Treatment.COUNTRY_ONLY, Treatment.PII_ONLY, Treatment.DROP, Treatment.HANDLE)
 
 _REGISTRATION = {
-    "token": P, "code": P, "state": P, "return_reason": P, "return_step": P, "lang": P,
+    "token": H, "code": P, "state": P, "return_reason": PII, "return_step": P, "lang": P,
     "arrival": P, "departure": P, "nights": P, "purpose_of_stay": P,
     "last_name": P, "first_name": P, "dob": A, "passport_no": M, "nationality": P,
     "visa_no": M, "car_reg": M,
@@ -45,7 +49,7 @@ _REGISTRATION = {
     "group_id": P, "is_group_leader": P,
 }
 _SIGNATURE = {
-    "token": P, "signature_png": PII, "signer_role": P, "signer_name": PII,
+    "token": H, "signature_png": PII, "signer_role": P, "signer_name": PII,
     "signed_content_hash": D, "declaration_text": P, "declaration_lang": P, "signed_at": P,
 }
 _GROUP_REQUEST = {
@@ -122,6 +126,11 @@ def apply(record: dict[str, Any], table: str, scopes: set[str]) -> dict[str, Any
         elif treatment is Treatment.PII_ONLY:
             if full:
                 out[key] = value
+        elif treatment is Treatment.HANDLE:
+            if value:
+                out["ref"] = ref_for(str(value))
+            if full:
+                out[key] = value
     return out
 
 
@@ -146,6 +155,7 @@ def policy_markdown() -> str:
         Treatment.COUNTRY_ONLY: ("returned (the only address field)", "returned"),
         Treatment.PII_ONLY: ("absent", "returned"),
         Treatment.DROP: ("absent", "absent"),
+        Treatment.HANDLE: ("opaque `ref` only (the token opens the guest wizard)", "`ref` and the token"),
     }
     for key, t in FIELD_POLICY.items():
         if t is Treatment.PASS:

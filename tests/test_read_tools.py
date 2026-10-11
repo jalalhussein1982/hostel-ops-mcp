@@ -57,7 +57,7 @@ async def test_get_registration_on_a_draft_returns_the_card_not_an_error(reader,
     r = await reader.call_tool("get_registration", {"token": token})
     assert r.is_error is False
     reg = r.structured_content
-    assert reg["state"] == "DRAFT" and reg["token"] == token
+    assert reg["state"] == "DRAFT" and reg.get("token") is None and reg["ref"]
     # the half-filled wizard pages leak nothing beyond the policy
     assert reg["passport_no"].startswith("•••") and reg.get("dob") is None and reg["age_band"]
     assert reg["signature"] is None
