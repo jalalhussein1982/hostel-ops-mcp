@@ -17,8 +17,8 @@ async def test_resources_and_templates_are_listed(client):
     assert static == {"hostel://policy/roles", "hostel://policy/retention"}
     assert templates == {"hostel://registration/{token}", "hostel://group/{slug}",
                          "export://xlsx/{export_id}", "export://pdf/{export_id}"}
-    assert set(guards.RESOURCE_SCOPES) == {"hostel://policy/roles", "hostel://policy/retention",
-                                           "hostel://registration/{token}", "hostel://group/{slug}", "export://{export_id}"}
+    # the scope table names exactly the URIs the server serves
+    assert set(guards.RESOURCE_SCOPES) == static | templates
 
 
 @pytest.mark.anyio
@@ -38,7 +38,8 @@ async def test_roles_policy_names_every_scope_and_tool_and_is_public_for_an_hour
 async def test_retention_policy_quotes_the_apps_privacy_notice(client):
     res = await client.read_resource("hostel://policy/retention")
     text = res.contents[0].text
-    assert "326/1999" in text and "purge" in text.lower() and "legal representative" not in text[:0]
+    assert "326/1999" in text and "purge" in text.lower()
+    assert "group request" in text   # the purge guard paragraph names what delete_period removes
     assert "<p>" not in text and "<li>" not in text          # HTML from the i18n catalogue is stripped
     assert "verified" in text and "backup" in text.lower()
     assert res.ttl_ms == 3_600_000 and res.cache_scope == "public"

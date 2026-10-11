@@ -59,8 +59,8 @@ def retention_text() -> str:
         "guard passes: backup configured, a verified backup row for the month, live rows present, "
         "live count equal to the backed-up count, and the encrypted snapshot on disk, decrypting "
         "and re-verifying. The guard runs before the human is asked, so the human only ever "
-        "confirms a purge that is actually allowed; the question quotes the entry count and the "
-        "snapshot checksum.",
+        "confirms a purge that is actually allowed; the question quotes the entry count, the number of "
+        "group requests the app removes with the month (open portals included), and the snapshot checksum.",
         "- Every erase, purge, edit and export writes an `admin_audit` row with the actor "
         "`mcp:<subject>`; audit rows name fields and counts, never values.",
         "",

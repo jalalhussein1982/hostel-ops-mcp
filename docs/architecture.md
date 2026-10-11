@@ -5,10 +5,11 @@ MCP host (Claude Code / Desktop / Inspector / agent)
         │  Streamable HTTP + Bearer JWT                 stdio (local, STDIO_SCOPES)
         ▼
 hostel_ops_mcp/
-  server.py    MCPServer wiring: 16 tools in spec order, 6 resources, 2 prompts, cache middleware,
+  server.py    MCPServer wiring: 16 tools in spec order, 6 resources, 2 prompts, cache middleware, auth_required,
                create_server() / server_from_env() / main(--stdio|--http)
   guards.py    SCOPES, TOOL_SCOPES, ROLE_SCOPES; require(ctx, tool) reads the verified token or STDIO_SCOPES
   redact.py    FIELD_POLICY for every column of 4 tables; apply(record, table, scopes)
+  handles.py   ref = HMAC(token): the opaque handle non-pii callers get instead of the wizard-opening token
   confirm.py   confirm_or_request(): the Multi Round-Trip confirmation (ask / declined / confirmed)
   ops.py       plain-Python operations over the app's service layer; no MCP imports
   auth.py      JwtVerifier (JWKS, PyJWT) -> AccessToken

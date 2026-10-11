@@ -45,7 +45,8 @@ RESOURCE_SCOPES: dict[str, tuple[str, ...]] = {
     "hostel://policy/retention": (),
     "hostel://registration/{token}": ("desk:read",),
     "hostel://group/{slug}": ("groups:read",),
-    "export://{export_id}": ("export", "pii:read"),
+    "export://xlsx/{export_id}": ("export", "pii:read"),
+    "export://pdf/{export_id}": ("export", "pii:read"),
 }
 
 # Which app role holds which scope (the Keycloak realm mirrors this).

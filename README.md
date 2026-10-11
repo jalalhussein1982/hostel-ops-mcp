@@ -16,10 +16,10 @@ service layer.
 | Claim | Where it is tested |
 |---|---|
 | Sixteen tools in a fixed order, every one with an output schema and honest annotations | `tests/test_protocol.py` |
-| A token without `pii:read` never receives a document number, a date of birth, an address, a signature or a leader's contact, from any tool or resource; every column of every table is classified | `tests/test_redact.py`, `test_read_tools.py`, `test_http.py` |
+| Without `pii:read`, document numbers are reduced to their last two characters, the date of birth to an age band, the address to its country; signatures, signer names, leader contacts, the desk's free-text return reason and the raw registration token are absent, from every tool and resource. A test searches every read result for every PII literal in the database; every column of every table is classified | `tests/test_redact.py`, `test_pii_leak.py`, `test_read_tools.py`, `test_http.py` |
 | Scopes are enforced per tool; write scopes do not imply read scopes; the error names the missing scope | `tests/test_scopes.py` (every tool × scope set) |
 | Writes run the app's state machine and are idempotent where they say they are; every write audits | `tests/test_writes.py` |
-| Erasure and month purge act only after a human confirms through the host; the sealed `requestState` rejects a retry with other arguments or a tampered token (`-32602`) | `tests/test_mrtr.py`, `test_purge_guard.py` |
+| Erasure and month purge act only when the host returns an `accept` with `confirm: true` for the question the server asked (the server cannot see the human; it can only bind the answer to the question, the arguments and the principal); the sealed `requestState` rejects a retry with other arguments or a tampered token (`-32602`) | `tests/test_mrtr.py`, `test_purge_guard.py` |
 | The purge guard (backup configured, verified, counts equal, snapshot decrypts and re-verifies) runs before anyone is asked | `tests/test_purge_guard.py` |
 | Exports contain APPROVED rows only; bytes travel as a resource, not inline | `tests/test_export.py` |
 | Bearer JWTs are verified against the issuer's JWKS; 401 with `resource_metadata`, 403 for a missing scope, RFC 9728 metadata; the real HTTP app is tested in-process | `tests/test_auth.py`, `test_http.py` |
@@ -102,8 +102,8 @@ Registration order is the listing order. Annotations are the real ones.
 | `resend_group_invite(slug, receiver_email?)` | `groups:write` + `pii:read` | open-world | New password, optional corrected email |
 | `export_authority_report(tokens \| window, format)` | `export` + `pii:read` | writes a file | APPROVED-only XLSX/PDF; bytes via `export://xlsx/{id}` or `export://pdf/{id}` |
 | `edit_approved_registration(token, fields)` | `admin:write` + `pii:read` | idempotent | Wizard-validated edit of an APPROVED record; audit names fields only |
-| `erase_registration(token)` | `admin:erase` | **destructive**, MRTR-confirmed | One record and its signature, after the human says yes |
-| `purge_month(period)` | `admin:erase` | **destructive**, MRTR-confirmed | One arrival month, after the app's delete guard passes and the human says yes |
+| `erase_registration(token)` | `admin:erase` | **destructive**, MRTR-confirmed | One record and its signature, once the host returns the human's accept |
+| `purge_month(period)` | `admin:erase` | **destructive**, MRTR-confirmed | One arrival month (approved rows and that month's group requests), after the app's delete guard passes and the host returns the accept |
 
 Resources: `hostel://policy/roles` (scope matrix + field policy, public, 1 h), `hostel://policy/retention`
 (the app's privacy notice + the purge guard, public, 1 h), `hostel://registration/{token}`,
@@ -125,8 +125,9 @@ Prompts: `morning_desk_briefing`, `authority_export_checklist(period)`.
 | `admin:erase` | admin | erase, purge |
 
 Without `pii:read`: `passport_no`/`visa_no`/`car_reg` become `•••` + last two characters, `dob`
-becomes `age_band` (`<15`, `15-17`, `18+`), the address shrinks to `addr_country`, signatures,
-signer names, leader contacts and drafts are absent. The full table is `redact.FIELD_POLICY` and
+becomes `age_band` (`<15`, `15-17`, `18+`), the address shrinks to `addr_country`, the raw
+registration token becomes an opaque `ref`, and signatures, signer names, leader contacts, the
+free-text `return_reason` and drafts are absent. The full table is `redact.FIELD_POLICY` and
 the resource `hostel://policy/roles`.
 
 ## Design decisions
@@ -149,7 +150,12 @@ the resource `hostel://policy/roles`.
   tool, arguments, principal, TTL by the SDK) and act only on `accept` + `confirm: true`. Hosts
   without form elicitation are told to use the admin panel.
 - **The purge guard runs before the question.** A human only ever confirms a purge that is
-  allowed, and the question quotes the entry count and the snapshot checksum.
+  allowed, and the question quotes the entry count, the group requests the app removes with the
+  month, and the snapshot checksum; all three are bound into the request state.
+- **What "confirmed" can mean.** The server never sees the human. It can enforce only that the
+  host returned an `accept` with `confirm: true` to the exact question it asked, bound to the
+  tool, the arguments and the token's principal. A host that fabricates accepts defeats this; the
+  host is part of the trust boundary, as it is for every MCP elicitation.
 - **Verify tokens, never mint them.** `JwtVerifier` + `AuthSettings(required_scopes=["mcp"],
   validate_token_resource=True)`; Keycloak is the demo AS, its realm generated from `guards.py`.
 - **Synthetic by default.** `fixtures/synthetic.db` is built through the app's own data layer with
