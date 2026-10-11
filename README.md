@@ -25,14 +25,14 @@ service layer.
 | Bearer JWTs are verified against the issuer's JWKS; 401 with `resource_metadata`, 403 for a missing scope, RFC 9728 metadata; the real HTTP app is tested in-process | `tests/test_auth.py`, `test_http.py` |
 | Synthetic data by default, no real person in the repo | `tests/test_synth.py` |
 
-`uv run pytest -q` → **130 passed** in about 4 s. No test needs the network, Docker or Keycloak.
+`uv run pytest -q` → **165 passed** in about 5 s. No test needs the network, Docker or Keycloak.
 
 ## Run it in sixty seconds
 
 ```sh
 git clone --recurse-submodules <this repo> && cd hostel-ops-mcp
 uv sync
-uv run pytest -q                                              # 130 passed
+uv run pytest -q                                              # 165 passed
 uv run python -m hostel_ops_mcp.server --stdio                # stdio, read scopes only
 npx @modelcontextprotocol/inspector uv run python -m hostel_ops_mcp.server --stdio
 ```
@@ -166,12 +166,12 @@ the resource `hostel://policy/roles`.
 ## Repository
 
 ```
-hostel_ops_mcp/   server.py guards.py redact.py confirm.py ops.py auth.py policy.py models.py synth.py _app.py
+hostel_ops_mcp/   server.py guards.py redact.py handles.py confirm.py ops.py auth.py policy.py models.py synth.py _app.py
 vendor/           hostel-checkin-system (submodule, never modified)
 fixtures/         synthetic.db synthetic.json
 scripts/          make_fixtures.py make_realm.py dev_token.py capture_use_cases.py
 keycloak/         realm-hostel.json      docker-compose.yml
-tests/            13 files, 130 tests
+tests/            17 files, 165 tests
 docs/             architecture.md use-cases.md auth.md live-attach.md superpowers/{specs,plans}
 evals/            hostel-ops.xml (10 read-only QA pairs, answers computed from the fixture)
 ```

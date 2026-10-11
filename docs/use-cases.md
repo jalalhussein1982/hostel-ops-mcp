@@ -3,7 +3,8 @@
 Eight scenarios, narrated. Every tool call and every output below was captured by running
 `scripts/capture_use_cases.py` against a scratch copy of `fixtures/synthetic.db` (synthetic
 people, fixed seed) through the SDK's in-memory client. Nothing is edited except the sealed
-`request_state` (truncated) and a signature PNG (truncated). Timestamps such as `approved_at`
+`request_state` (truncated) and a signature PNG (truncated). Every registration carries a `ref`;
+the raw `token` is present only because scenarios 1–7 run with `pii:read`. Timestamps such as `approved_at`
 are the wall clock at capture time; the fixture's own timestamps come from the synthetic clock.
 
 Scopes in scenarios 1–7: an admin token (every scope, including `pii:read`), so document
@@ -21,6 +22,9 @@ handover format, and it tells the model not to approve or return anything while 
 model walks the queue (here only the first page of three is shown; `next_cursor` continues it),
 asks for minor alerts, and lists the groups whose portal is still open.
 
+Every card carries a `ref`, the handle a receptionist uses to address a record; the raw `token`
+appears here only because this run holds `pii:read` (scenario 8 shows the same card without it).
+
 What to read in the output: the two alerts. Lopa Nupali is 16 and signed personally, which the
 law allows; Zodo Detiha is under 15 and also signed personally, so
 `needs_legal_representative` is `true` and the desk must collect a parent's signature before
@@ -31,14 +35,14 @@ invite went out (`get_group` shows two of them are the same person, entered twic
 
 Prompt text:
 
-> You are preparing the morning handover for the hostel reception desk. Call list_pending_registrations (walk every page), desk_minor_alerts, and list_groups with status=pending. Then write the handover in this format:
+> You are preparing the morning handover for the hostel reception desk. Call list_pending_registrations (walk every page with next_cursor), desk_minor_alerts, list_groups with status=pending and then get_group for each pending group, and list_pending_registrations with state=RETURNED. Then write the handover in this format:
 > 
-> 1. Arrivals today: pending registrations whose arrival is today, oldest first, with name, nationality, nights and the 4-digit code.
-> 2. Minors: every alert, stating whether a legal representative's signature is still needed before approval (needs_legal_representative).
-> 3. Groups awaiting members: pending groups with arrival date, filled/total rows and whether the invite was sent.
-> 4. Anything RETURNED older than 24 hours (compare return state and updated_at from get_registration on RETURNED tokens you know about) that the guest has not resubmitted.
+> 1. Arrivals today: pending cards whose arrival is today, oldest first, with last_name, first_name, nationality, nights and the 4-digit code.
+> 2. Minors: every alert, with age_band and whether a legal representative's signature is still needed before approval (needs_legal_representative).
+> 3. Groups awaiting members: each pending group's group_name, arrival, filled of total rows, attention_ids and duplicates from get_group, and whether invite_sent_at is set.
+> 4. Returned and not resubmitted: RETURNED cards whose created_at is older than 24 hours, with return_step (1 dates, 2 personal, 3 address); quote return_reason only if it is present.
 > 
-> Use the masked document numbers exactly as returned; never guess a full number. Do not approve or return anything in this briefing.
+> Use the masked document numbers and the ref values exactly as returned; never guess a full number or a token. Do not approve or return anything in this briefing.
 
 ### pending queue, first page
 
@@ -50,6 +54,7 @@ list_pending_registrations({"limit": 3})
 {
   "items": [
     {
+      "ref": "b24e527a78982b40",
       "token": "lNft8MglJKdrN61RsjARlHn09BY41lgv",
       "serial": null,
       "state": "PENDING_REVIEW",
@@ -73,9 +78,11 @@ list_pending_registrations({"limit": 3})
       "is_group_leader": false,
       "under18": false,
       "return_reason": null,
-      "return_step": null
+      "return_step": null,
+      "code": "3104"
     },
     {
+      "ref": "8fef6b503815da22",
       "token": "HRDr7b2F06_kT2J_n4pDYMzf8ZCr_Z3a",
       "serial": null,
       "state": "PENDING_REVIEW",
@@ -99,9 +106,11 @@ list_pending_registrations({"limit": 3})
       "is_group_leader": false,
       "under18": false,
       "return_reason": null,
-      "return_step": null
+      "return_step": null,
+      "code": "6489"
     },
     {
+      "ref": "bf11cb99f6f09864",
       "token": "8kMhP3ejpf3tP68ZfG7Rv0eZpf1plcCu",
       "serial": null,
       "state": "PENDING_REVIEW",
@@ -125,7 +134,8 @@ list_pending_registrations({"limit": 3})
       "is_group_leader": false,
       "under18": false,
       "return_reason": null,
-      "return_step": null
+      "return_step": null,
+      "code": "0771"
     }
   ],
   "next_cursor": "OGtNaFAzZWpwZjN0UDY4WmZHN1J2MGVacGYxcGxjQ3U",
@@ -143,6 +153,7 @@ desk_minor_alerts({})
 {
   "result": [
     {
+      "ref": "ca236c89c77f6467",
       "token": "eL7Z95VzQ88-n8yfmCXAyrduRPHe-cuC",
       "serial": null,
       "state": "PENDING_REVIEW",
@@ -155,6 +166,7 @@ desk_minor_alerts({})
       "needs_legal_representative": false
     },
     {
+      "ref": "a1d891a399ebd3ee",
       "token": "O_cuX7OfIsTdofo7GbngvgJRtJ4rYFKU",
       "serial": null,
       "state": "PENDING_REVIEW",
@@ -224,9 +236,10 @@ approve_registration({"token": "lNft8MglJKdrN61RsjARlHn09BY41lgv"})
 
 ```json
 {
+  "ref": "b24e527a78982b40",
   "token": "lNft8MglJKdrN61RsjARlHn09BY41lgv",
   "serial": "2026-10-11-0001",
-  "approved_at": "2026-10-10T23:55:57Z",
+  "approved_at": "2026-10-11T00:24:12Z",
   "already_approved": false
 }
 ```
@@ -239,9 +252,10 @@ approve_registration({"token": "lNft8MglJKdrN61RsjARlHn09BY41lgv"})
 
 ```json
 {
+  "ref": "b24e527a78982b40",
   "token": "lNft8MglJKdrN61RsjARlHn09BY41lgv",
   "serial": "2026-10-11-0001",
-  "approved_at": "2026-10-10T23:55:57Z",
+  "approved_at": "2026-10-11T00:24:12Z",
   "already_approved": true
 }
 ```
@@ -252,7 +266,7 @@ approve_registration({"token": "lNft8MglJKdrN61RsjARlHn09BY41lgv"})
 approve_registration({"token": "9-JtWBL_mqLTzl0pnQp0hXI5KgDDOJsS"})
 ```
 
-ToolError: Error executing tool approve_registration: registration 9-JtWBL_mqLTzl0pnQp0hXI5KgDDOJsS is DRAFT; allowed actions from DRAFT: SUBMIT
+ToolError: Error executing tool approve_registration: registration 868c662b4098a92c is DRAFT; allowed actions from DRAFT: SUBMIT
 
 
 ## 3. Return a registration with a reason
@@ -273,6 +287,7 @@ return_registration({"token": "HRDr7b2F06_kT2J_n4pDYMzf8ZCr_Z3a", "reason": "Pas
 
 ```json
 {
+  "ref": "8fef6b503815da22",
   "token": "HRDr7b2F06_kT2J_n4pDYMzf8ZCr_Z3a",
   "state": "RETURNED",
   "return_step": 2,
@@ -288,6 +303,7 @@ get_registration({"token": "HRDr7b2F06_kT2J_n4pDYMzf8ZCr_Z3a"})
 
 ```json
 {
+  "ref": "8fef6b503815da22",
   "token": "HRDr7b2F06_kT2J_n4pDYMzf8ZCr_Z3a",
   "serial": null,
   "state": "RETURNED",
@@ -314,7 +330,7 @@ get_registration({"token": "HRDr7b2F06_kT2J_n4pDYMzf8ZCr_Z3a"})
   "return_step": 2,
   "code": "6489",
   "approved_at": null,
-  "updated_at": "2026-10-10T23:55:57Z",
+  "updated_at": "2026-10-11T00:24:12Z",
   "addr_structured": 1,
   "addr_street": "32 Bridge Street",
   "addr_postcode": "49870",
@@ -351,10 +367,10 @@ create_group_link({"group_name": "Southbrook Primary — Year 6 trip", "leader_f
 
 ```json
 {
-  "slug": "4UdlL4L0-C5aZdpgOA8Da42zHG3fwGcd",
-  "portal_url": "http://127.0.0.1:8080/g/4UdlL4L0-C5aZdpgOA8Da42zHG3fwGcd",
-  "member_url": "http://127.0.0.1:8080/gm/hGsoBnF1DinHWPa2T2hxUo-zxE-9SKw6",
-  "portal_password": "lomH6JO9PKBs",
+  "slug": "_26DQUHgZC7tXNa9GuBQ3cl8k1n14h4H",
+  "portal_url": "http://127.0.0.1:8080/g/_26DQUHgZC7tXNa9GuBQ3cl8k1n14h4H",
+  "member_url": "http://127.0.0.1:8080/gm/0D0St0Dc9o1cod49IPKhoVSav8tR5P1_",
+  "portal_password": "twnsfuwPxuOm",
   "email_sent": false,
   "receiver_email": "m.tovane@example.invalid"
 }
@@ -436,19 +452,19 @@ export_authority_report({"arrival_from": "2026-09-01", "arrival_to": "2026-09-30
 
 ```json
 {
-  "export_id": "8dc26fc934294588837a3d76ab16cff9",
-  "resource_uri": "export://xlsx/8dc26fc934294588837a3d76ab16cff9",
+  "export_id": "5ed58a71fcb24364adf3805af44d5ade",
+  "resource_uri": "export://xlsx/5ed58a71fcb24364adf3805af44d5ade",
   "format": "xlsx",
   "rows": 15,
   "skipped": [],
   "skipped_detail": [],
-  "sha256": "afa70183efc186dc6d2e26e51ff5ee3d6571397876fa29148810f5fdfc2a5626",
-  "generated_at": "2026-10-10T23:55:57Z",
-  "expires_at": "2026-10-11T00:55:57Z"
+  "sha256": "2f210ee291b0f7a94ffa7011696a6428172baba83bc000a4c95aa375cd68df64",
+  "generated_at": "2026-10-11T00:24:13Z",
+  "expires_at": "2026-10-11T01:24:13Z"
 }
 ```
 
-resources/read export://xlsx/8dc26fc934294588837a3d76ab16cff9 -> 6808 bytes, mime application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, sha256 afa70183efc186dc…, ttlMs=0, cacheScope=private
+resources/read export://xlsx/5ed58a71fcb24364adf3805af44d5ade -> 6807 bytes, mime application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, sha256 2f210ee291b0f7a9…, ttlMs=0, cacheScope=private
 
 ### export with a pending token in the list
 
@@ -458,8 +474,8 @@ export_authority_report({"tokens": ["A5rF-mEntPjKpbu-pCwhHTwSasCx8z72", "V7KXK6y
 
 ```json
 {
-  "export_id": "096c70b141924c8fa308463f0a3f3a16",
-  "resource_uri": "export://pdf/096c70b141924c8fa308463f0a3f3a16",
+  "export_id": "447538d4df3f48d4ac1b3c6de252cb54",
+  "resource_uri": "export://pdf/447538d4df3f48d4ac1b3c6de252cb54",
   "format": "pdf",
   "rows": 2,
   "skipped": [
@@ -468,9 +484,9 @@ export_authority_report({"tokens": ["A5rF-mEntPjKpbu-pCwhHTwSasCx8z72", "V7KXK6y
   "skipped_detail": [
     "8kMhP3ejpf3tP68ZfG7Rv0eZpf1plcCu: PENDING_REVIEW"
   ],
-  "sha256": "c304cb58652c8f9a925f76cbaeeba1c172bdb3637b6fe1148be90b5a9090b469",
-  "generated_at": "2026-10-10T23:55:58Z",
-  "expires_at": "2026-10-11T00:55:58Z"
+  "sha256": "97ba89da72db3b26a81d235d451575b678c917ec01b2bea0509a0a8e05088148",
+  "generated_at": "2026-10-11T00:24:13Z",
+  "expires_at": "2026-10-11T01:24:13Z"
 }
 ```
 
@@ -488,8 +504,8 @@ for this tool, these arguments and this principal, then the handler acts: one ro
 (the signature cascades), one audit row. Had the retry carried a different token, the round
 would have failed with `-32602 Invalid or expired requestState` before the handler ran
 (`tests/test_mrtr.py`). The second erasure shows a decline: a non-error `cancelled` result and
-nothing deleted. The audit trail shows the delete and the two exports, with counts and ids,
-never names.
+nothing deleted. The audit trail shows the delete and the two exports, with refs, counts and ids,
+never names or raw tokens.
 
 
 ```
@@ -519,7 +535,7 @@ First round: `InputRequiredResult`
       }
     }
   },
-  "request_state": "v1.3ZB6UZo54t5f7ZOZZxg59… (sealed, 299 chars)"
+  "request_state": "v1.DMAjxd3DGzL7v2XSKYT3t… (sealed, 302 chars)"
 }
 ```
 
@@ -532,6 +548,7 @@ erase_registration({"token": ...}, input_responses={"confirm": accept/confirm=tr
 ```json
 {
   "result": {
+    "ref": "ca9323dddecef667",
     "token": "fuzv74fIwBao0uGnE6JvXvaZNw5tfmlN",
     "deleted": 1,
     "removed_group": null
@@ -566,27 +583,27 @@ audit_log({"limit": 3})
   "result": [
     {
       "id": 11,
-      "at": "2026-10-10T23:55:58Z",
+      "at": "2026-10-11T00:24:13Z",
       "actor": "mcp:stdio",
       "action": "delete",
       "period": "2026-09",
-      "detail": "registration fuzv74fIwBao0uGnE6JvXvaZNw5tfmlN serial=2026-09-11-0001 erased"
+      "detail": "registration ca9323dddecef667 serial=2026-09-11-0001 erased"
     },
     {
       "id": 10,
-      "at": "2026-10-10T23:55:58Z",
+      "at": "2026-10-11T00:24:13Z",
       "actor": "mcp:stdio",
       "action": "export",
       "period": "2026-08",
-      "detail": "2 rows pdf export 096c70b141924c8fa308463f0a3f3a16 sha256 c304cb58652c; skipped 1"
+      "detail": "2 rows pdf export 447538d4df3f48d4ac1b3c6de252cb54 sha256 97ba89da72db; skipped 1"
     },
     {
       "id": 9,
-      "at": "2026-10-10T23:55:57Z",
+      "at": "2026-10-11T00:24:13Z",
       "actor": "mcp:stdio",
       "action": "export",
       "period": "2026-09",
-      "detail": "15 rows xlsx export 8dc26fc934294588837a3d76ab16cff9 sha256 afa70183efc1; skipped 0"
+      "detail": "15 rows xlsx export 5ed58a71fcb24364adf3805af44d5ade sha256 2f210ee291b0; skipped 0"
     }
   ]
 }
@@ -605,7 +622,7 @@ refusals, each a `ToolError` the model can read and none producing a confirmatio
    remain, so there is nothing to purge (Review Focus 3).
 
 Only when every check passes does the human see a question, and that question quotes the entry
-count and the snapshot checksum (`tests/test_purge_guard.py::test_passing_guard_asks_with_count_and_sha`).
+count, the number of group requests the app removes with the month, and the snapshot checksum (`tests/test_purge_guard.py::test_passing_guard_asks_with_count_and_sha`).
 
 
 ### no backup key on this machine
@@ -646,27 +663,31 @@ ToolError: Error executing tool purge_month: nothing to purge: 2026-07 has no ap
 
 ## 8. The receptionist token that cannot see passport numbers
 
-The same approved record, read with two tokens. With `desk:read` alone: the passport is
-`•••61`, `dob` is `null` and only `age_band: "<15"` remains, the address shrinks to its country,
-the signer's name is absent and the signature image is not returned even though
-`include_signature=true` was asked for. The provenance (`signer_role`, `signed_at`) is kept,
-because the desk needs to know a legal representative signed. The same token cannot call
-`month_summary`: the error names the missing scope.
+The same approved record, read with two tokens. With `desk:read` alone the caller does not even
+hold the registration token (in the app that token opens the guest wizard without a login); it
+addresses the record by its `ref`. The result: `token` is `null`, the passport is `•••61`, `dob` is
+`null` and only `age_band: "<15"` remains, the address shrinks to its country, the signer's name
+is absent and the signature image is not returned even though `include_signature=true` was asked
+for. The provenance (`signer_role`, `signed_at`) is kept, because the desk needs to know a legal
+representative signed. The same token cannot call `month_summary`: the error names the missing
+scope.
 
-With `desk:read pii:read`: date of birth, full passport number, the address in capitals as the
-app stores it after approval, the representative's name and the PNG. The difference is one
-scope on the token, and the server enforces it on every field through one table (`redact.py`).
+With `desk:read pii:read`: the raw token, date of birth, full passport number, the address in
+capitals as the app stores it after approval, the representative's name and the PNG. The
+difference is one scope on the token, and the server enforces it on every field through one
+table (`redact.py`).
 
 
-### token scopes: desk:read
+### token scopes: desk:read (the caller only ever holds the ref)
 
 ```
-get_registration({"token": "B5GCPYu9X0n3rtxFHHfoErXztwHIW47p", "include_signature": true})
+get_registration({"token": "e604828acd5596fc", "include_signature": true})
 ```
 
 ```json
 {
-  "token": "B5GCPYu9X0n3rtxFHHfoErXztwHIW47p",
+  "ref": "e604828acd5596fc",
+  "token": null,
   "serial": "2026-08-15-0001",
   "state": "APPROVED",
   "arrival": "2026-08-15",
@@ -725,6 +746,7 @@ get_registration({"token": "B5GCPYu9X0n3rtxFHHfoErXztwHIW47p", "include_signatur
 
 ```json
 {
+  "ref": "e604828acd5596fc",
   "token": "B5GCPYu9X0n3rtxFHHfoErXztwHIW47p",
   "serial": "2026-08-15-0001",
   "state": "APPROVED",

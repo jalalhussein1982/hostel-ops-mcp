@@ -118,11 +118,13 @@ async def main(scratch: Path) -> None:
              await c.call_tool("purge_month", {"period": "2026-07"}))
 
     print("\n## 8. The receptionist token that cannot see passport numbers")
+    from hostel_ops_mcp.handles import ref_for
     tok = planted["minor_tokens"]["approved_under15_legal_rep"]
+    ref = ref_for(tok)
     os.environ["STDIO_SCOPES"] = "desk:read"
     async with Client(mcp, raise_exceptions=True) as c:
-        show("token scopes: desk:read", f'get_registration({{"token": "{tok}", "include_signature": true}})',
-             await c.call_tool("get_registration", {"token": tok, "include_signature": True}))
+        show("token scopes: desk:read (the caller only ever holds the ref)", f'get_registration({{"token": "{ref}", "include_signature": true}})',
+             await c.call_tool("get_registration", {"token": ref, "include_signature": True}))
         show("same token, month_summary", "month_summary({})", await c.call_tool("month_summary", {}))
     os.environ["STDIO_SCOPES"] = "desk:read,pii:read"
     async with Client(mcp, raise_exceptions=True) as c:

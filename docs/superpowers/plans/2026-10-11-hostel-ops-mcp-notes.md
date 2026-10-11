@@ -85,3 +85,53 @@ SDK installed: `mcp 2.3.0` (plan: `>=2.2`), protocol 2026-07-28.
   `docs/live-attach.md` covers the owner's path.
 - Live mode (`HOSTEL_MODE=live`, SMTP through the app's `group_email`) is wired but exercised only
   through the synthetic no-op recorder in tests.
+
+## Review round (read-only reviewer, 12 findings)
+
+Each finding was checked against the code before acting. Confirmed findings were fixed with a
+failing test first; one commit per fix (findings 5 and 10 share a commit: same purge-message code
+path and the same test file).
+
+1. **Portal password at `groups:write`** — confirmed. `create_group_link` and `resend_group_invite`
+   now require `pii:read` too (the password opens the leader portal, which shows member PII). The
+   result keeps `receiver_email` because the caller now holds `pii:read`.
+2. **Tokens are bearer credentials** — confirmed (`GET /w/{token}/{step}` has no login check and
+   rehydrates the form for RETURNED records). Done: `handles.ref_for` (HMAC-SHA256 under
+   `HANDLE_KEY`, 16 hex) on every registration; the raw token only with `pii:read`; every tool and
+   the registration resource accept a ref or a token; audit rows and state errors name refs; group
+   duplicates are refs. **Rejected 2(a)** (`pii:read` for `return_registration`): with refs a caller
+   below `pii:read` never learns a token, so returning a card cannot hand anyone the wizard; the
+   wizard risk belongs to whoever holds the token, and `return_registration` is the desk's core
+   action (spec §4.2 puts it at `desk:write`). The threat model is in the README.
+3. **Fail-open caller resolution** — confirmed as a defence-in-depth gap (the SDK's bearer
+   middleware already rejects unauthenticated HTTP requests before any tool runs). Done:
+   `create_server(auth_required=...)`, default True with a verifier; `guards.current_caller` raises
+   instead of falling back to `STDIO_SCOPES`; `guards.require` raises on an unclassified tool name;
+   `--http` without OAuth refuses a non-loopback host or write/erase/pii `STDIO_SCOPES` unless
+   `--insecure-no-auth`; the HTTP tests run with every stdio scope set.
+4. **Bare `elicitation: {}`** — confirmed (2025-06-18 clients). Form or bare counts; url-only is
+   refused. HTTP-level MRTR test added.
+5. **Purge removes group requests** — confirmed (`repo.delete_period`). The question states both
+   counts and the checksum; `request_state` binds all three; `PurgeResult.group_requests_deleted`.
+6. **Briefing prompt asks for what no tool returns** — confirmed. `code` is on the desk's own
+   `/queue` card, so it is on `RegistrationCard`; `list_pending_registrations(state=RETURNED|DRAFT)`;
+   prompt rewritten to registered tools and real fields, enforced by a test.
+7. **JWKS fetching** — confirmed. Lock, 30 s unknown-kid throttle, 64 KiB cap, object/`keys`/string
+   `kid` checks, any failure → `None`; cold cache fetches once.
+8. **Export files** — confirmed. Default dir under the system temp dir (0700, per user), files
+   0600 via `O_EXCL`, race-tolerant sweep, sweep at start-up; documented.
+9. **Approve check-then-act** — confirmed in part. In-process races are serialised by a per-token
+   lock (one approval, one audit row; tested with threads). A foreign approval is detected when its
+   `approved_at` precedes our start; within the same second the app's whole-second timestamps make
+   the two indistinguishable, which cannot be fixed without touching the vendor's `repo.approve`.
+   `_audit_claims` still prevents a duplicate audit row from another replica of this server.
+10. **Double `str.format`** — confirmed. `GuardReport.message()` formats once; tested with `{` in a
+    snapshot name.
+11. **Tests** — confirmed. Allowed-scope matrix cases assert `is_error is False` (purge's guard
+    refusal is the one named exception); a spec tool missing from the listing fails the matrix;
+    `require` fails closed; the vacuous `text[:0]` assertion replaced; `tests/test_pii_leak.py`
+    searches every read result obtained without `pii:read` for every PII literal in the database.
+12. **Docs** — confirmed. README states what redaction actually returns, what "confirmed" can mean
+    server-side, `return_reason` is `pii:read`-only (free text typed by the desk), `RESOURCE_SCOPES`
+    names the two export templates and the test checks it against the live listing, and the
+    use-case transcript was regenerated after the fixes.
